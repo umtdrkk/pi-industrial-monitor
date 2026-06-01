@@ -1,0 +1,214 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 800px;
+    height: 480px;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f4f6f9;
+    color: #1e293b;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 16px;
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+    height: 40px;
+}
+
+h1 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+button {
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    color: #1e293b;
+    font-weight: 600;
+    transition: background 0.2s;
+}
+
+button:hover:not(:disabled) {
+    background: #e2e8f0;
+}
+
+button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+#page-indicator {
+    font-size: 0.8rem;
+    color: #64748b;
+    font-weight: 600;
+    min-width: 36px;
+    text-align: center;
+}
+
+.status {
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+}
+
+.status.connected {
+    background: #dcfce7;
+    color: #16a34a;
+    border: 1px solid #86efac;
+}
+
+.status.disconnected {
+    background: #fee2e2;
+    color: #dc2626;
+    border: 1px solid #fca5a5;
+}
+
+main {
+    padding: 8px 10px;
+    height: calc(480px - 40px);
+    overflow: hidden;
+}
+
+#sensor-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 8px;
+    height: 100%;
+}
+
+.sensor-card {
+    background: #ffffff;
+    border-radius: 8px;
+    padding: 8px 12px 4px 12px;
+    border: 1px solid #e2e8f0;
+    border-top: 3px solid #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sensor-card.voltage { border-top-color: #3b82f6; }
+.sensor-card.current { border-top-color: #10b981; }
+
+.sensor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+}
+
+.sensor-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sensor-name {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.sensor-type-badge {
+    font-size: 0.58rem;
+    padding: 1px 5px;
+    border-radius: 6px;
+    font-weight: 600;
+    width: fit-content;
+}
+
+.voltage .sensor-type-badge {
+    background: #eff6ff;
+    color: #3b82f6;
+}
+
+.current .sensor-type-badge {
+    background: #f0fdf4;
+    color: #10b981;
+}
+
+.sensor-right {
+    text-align: right;
+}
+
+.sensor-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    justify-content: flex-end;
+}
+
+.sensor-value {
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1;
+}
+
+.sensor-unit {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #94a3b8;
+}
+
+.sensor-percent {
+    font-size: 0.68rem;
+    color: #94a3b8;
+    margin-top: 1px;
+}
+
+.progress-bar {
+    height: 3px;
+    background: #f1f5f9;
+    border-radius: 2px;
+    margin-bottom: 6px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+}
+
+.voltage .progress-fill { background: #3b82f6; }
+.current .progress-fill { background: #10b981; }
+
+.chart-container {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+}
+
+.timestamp {
+    font-size: 0.58rem;
+    color: #cbd5e1;
+    text-align: right;
+    margin-top: 2px;
+    flex-shrink: 0;
+}

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=800, initial-scale=1.0">
+    <title>Pi Industrial Monitor</title>
+    <link rel="stylesheet" href="static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.0.5/mqtt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>Pi Industrial Monitor</h1>
+        <div class="header-right">
+            <button id="btn-prev" disabled>&#8592;</button>
+            <span id="page-indicator">-- / --</span>
+            <button id="btn-next" disabled>&#8594;</button>
+            <div id="connection-status" class="status disconnected">Verbinde...</div>
+        </div>
+    </header>
+    <main>
+        <div id="sensor-grid"></div>
+    </main>
+    <script src="static/main.js"></script>
+</body>
+</html>
