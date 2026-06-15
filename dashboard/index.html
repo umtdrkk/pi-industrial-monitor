@@ -1,26 +1,58 @@
 <!DOCTYPE html>
+<!-- Standard declaration telling the browser this is an HTML5 document -->
 <html lang="de">
+<!-- "lang=de" tells the browser the page content is in German -->
+
 <head>
+    <!-- Character encoding so special characters (ä, ö, ü, etc.) display correctly -->
     <meta charset="UTF-8">
+
+    <!-- Sets the viewport (page) width to 800px - useful for a fixed-size touchscreen display -->
     <meta name="viewport" content="width=800, initial-scale=1.0">
+
+    <!-- Title shown in the browser tab -->
     <title>Pi Industrial Monitor</title>
+
+    <!-- Link to our own CSS file for styling -->
     <link rel="stylesheet" href="static/style.css">
+
+    <!-- Load the MQTT.js library from a CDN, so the browser can connect to the MQTT broker
+         (over WebSockets) directly from JavaScript -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.0.5/mqtt.min.js"></script>
+
+    <!-- Load Chart.js from a CDN, used to draw graphs of sensor data -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
+
 <body>
     <header>
+        <!-- Page title shown at the top -->
         <h1>Pi Industrial Monitor</h1>
+
         <div class="header-right">
-            <button id="btn-prev" disabled>&#8592;</button>
+            <!-- Navigation buttons for switching between pages of sensors.
+                 "disabled" means they start out greyed-out/unclickable
+                 until JavaScript enables them -->
+            <button id="btn-prev" disabled>&#8592;</button> <!-- left arrow -->
+
+            <!-- Shows current page number, e.g. "1 / 2" - filled in by JavaScript -->
             <span id="page-indicator">-- / --</span>
-            <button id="btn-next" disabled>&#8594;</button>
+
+            <button id="btn-next" disabled>&#8594;</button> <!-- right arrow -->
+
+            <!-- Shows MQTT connection status. Starts as "disconnected" (red),
+                 JavaScript updates this once connected -->
             <div id="connection-status" class="status disconnected">Verbinde...</div>
+            <!-- "Verbinde..." = "Connecting..." in German -->
         </div>
     </header>
+
     <main>
+        <!-- Empty container - JavaScript will fill this with sensor cards/widgets -->
         <div id="sensor-grid"></div>
     </main>
+
+    <!-- Our main JavaScript file - handles MQTT connection, updating the UI, charts, etc. -->
     <script src="static/main.js"></script>
 </body>
 </html>
