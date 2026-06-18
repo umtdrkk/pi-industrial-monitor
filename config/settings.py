@@ -39,7 +39,7 @@ RUNNING_ON_PI = False
 # Each dictionary describes one sensor:
 #   "id"   - unique channel number (matches ADC channel / MQTT topic / OPC UA node)
 #   "type" - "voltage" or "current", determines how the raw ADC value is interpreted
-#   "name" - human-readable name shown in OPC UA and logs
+#   "name" - name shown in OPC UA and logs
 SENSOR_CHANNELS = [
     {"id": 1,  "type": "voltage",  "name": "Sensor 1"},
     {"id": 2,  "type": "voltage",  "name": "Sensor 2"},
