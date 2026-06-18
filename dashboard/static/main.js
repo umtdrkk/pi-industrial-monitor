@@ -1,4 +1,4 @@
-const MQTT_HOST = "localhost";
+const MQTT_HOST = window.location.hostname;
 const MQTT_PORT = 9001;
 const MQTT_TOPIC = "factory/#";
 const MAX_HISTORY = 40;
