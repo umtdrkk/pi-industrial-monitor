@@ -1,13 +1,20 @@
 const MQTT_HOST = window.location.hostname;
 const MQTT_PORT = 9001;
 const MQTT_TOPIC = "factory/#";
-const MAX_HISTORY = 40;
-const SENSORS_PER_PAGE = 4;
+const MAX_HISTORY = 60;
+
+// category -> visual type. Add a new category here and every
+// sensor with that category automatically gets the right chart.
+const VISUAL_MAP = {
+    "distance":    "gauge",
+    "temperature": "line",
+    "pressure":    "line",
+    "default":     "line",
+};
 
 const sensorData = {};
 const charts = {};
-const sensorOrder = [];
-let currentPage = 0;
+let knownSensorCount = 0;
 
 const client = mqtt.connect(`ws://${MQTT_HOST}:${MQTT_PORT}`);
 
@@ -29,13 +36,11 @@ client.on("message", (topic, message) => {
 
 function handleMessage(data) {
     if (!sensorData[data.id]) {
-        sensorData[data.id] = { history: [], latest: null };
-        sensorOrder.push(data.id);
-        sensorOrder.sort((a, b) => a - b);
-        rebuildGrid();
+        sensorData[data.id] = { history: [] };
+        createCard(data);
+        rebalanceGrid();
     }
 
-    sensorData[data.id].latest = data;
     sensorData[data.id].history.push({
         value: data.value,
         time: new Date(data.timestamp * 1000)
@@ -47,100 +52,75 @@ function handleMessage(data) {
     updateCard(data);
 }
 
-function totalPages() {
-    return Math.ceil(sensorOrder.length / SENSORS_PER_PAGE);
-}
-
-function visibleSensors() {
-    const start = currentPage * SENSORS_PER_PAGE;
-    return sensorOrder.slice(start, start + SENSORS_PER_PAGE);
-}
-
-function rebuildGrid() {
+// Adjusts the grid column count based on how many sensors exist,
+// so the layout works whether there are 2 or 10 sensors.
+function rebalanceGrid() {
     const grid = document.getElementById("sensor-grid");
-    grid.innerHTML = "";
+    const count = Object.keys(sensorData).length;
+    knownSensorCount = count;
 
-    // destroy existing charts cleanly
-    Object.keys(charts).forEach(id => {
-        charts[id].destroy();
-        delete charts[id];
-    });
+    let cols, rows;
+    if (count <= 2)      { cols = count; rows = 1; }
+    else if (count <= 4) { cols = 2; rows = 2; }
+    else if (count <= 6) { cols = 3; rows = 2; }
+    else if (count <= 8) { cols = 4; rows = 2; }
+    else                  { cols = 5; rows = 2; }
 
-    visibleSensors().forEach(id => {
-        const entry = sensorData[id];
-        if (entry && entry.latest) {
-            createCard(entry.latest);
-            // replay history into chart
-            if (entry.history.length > 0) {
-                charts[id].data.labels = entry.history.map(h =>
-                    h.time.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"})
-                );
-                charts[id].data.datasets[0].data = entry.history.map(h => h.value);
-                charts[id].update("none");
-                // update displayed value
-                document.getElementById(`value-${id}`).textContent =
-                    entry.latest.value.toFixed(2);
-                const percent = entry.latest.type === "voltage"
-                    ? (entry.latest.value / 10) * 100
-                    : entry.latest.percent ?? 0;
-                document.getElementById(`fill-${id}`).style.width = `${Math.min(percent, 100)}%`;
-                if (entry.latest.percent !== undefined) {
-                    const pctEl = document.getElementById(`percent-${id}`);
-                    if (pctEl) pctEl.textContent = `${entry.latest.percent}%`;
-                }
-                const date = new Date(entry.latest.timestamp * 1000);
-                document.getElementById(`time-${id}`).textContent =
-                    date.toLocaleTimeString("de-DE");
-            }
-        }
-    });
-
-    updatePageIndicator();
-}
-
-function updatePageIndicator() {
-    document.getElementById("page-indicator").textContent =
-        `${currentPage + 1} / ${totalPages()}`;
-    document.getElementById("btn-prev").disabled = currentPage === 0;
-    document.getElementById("btn-next").disabled = currentPage >= totalPages() - 1;
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
 }
 
 function updateCard(data) {
-    if (!visibleSensors().includes(data.id)) return;
+    const visual = VISUAL_MAP[data.category] || VISUAL_MAP.default;
 
     const valueEl = document.getElementById(`value-${data.id}`);
-    const fillEl  = document.getElementById(`fill-${data.id}`);
-    const timeEl  = document.getElementById(`time-${data.id}`);
-    const pctEl   = document.getElementById(`percent-${data.id}`);
-
     if (!valueEl) return;
 
     valueEl.textContent = data.value.toFixed(2);
 
-    const percent = data.type === "voltage"
-        ? (data.value / 10) * 100
-        : data.percent ?? 0;
-    fillEl.style.width = `${Math.min(percent, 100)}%`;
-
-    if (pctEl && data.percent !== undefined) {
-        pctEl.textContent = `${data.percent}%`;
-    }
-
     const date = new Date(data.timestamp * 1000);
-    timeEl.textContent = date.toLocaleTimeString("de-DE");
+    const timeEl = document.getElementById(`time-${data.id}`);
+    if (timeEl) timeEl.textContent = date.toLocaleTimeString("de-DE");
 
-    if (charts[data.id]) {
-        const history = sensorData[data.id].history;
-        charts[data.id].data.labels = history.map(h =>
-            h.time.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"})
-        );
-        charts[data.id].data.datasets[0].data = history.map(h => h.value);
-        charts[data.id].update("none");
+    const history = sensorData[data.id].history;
+
+    if (visual === "gauge") {
+        const percent = data.type === "voltage"
+            ? Math.min((data.value / 10) * 100, 100)
+            : Math.min(data.percent ?? 0, 100);
+        updateGauge(data.id, percent);
+    } else {
+        if (charts[data.id]) {
+            charts[data.id].data.labels = history.map(h =>
+                h.time.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"})
+            );
+            charts[data.id].data.datasets[0].data = history.map(h => h.value);
+            charts[data.id].update("none");
+        }
     }
+
+    // mid value (simple running average of buffered history)
+    const midEl = document.getElementById(`mid-${data.id}`);
+    if (midEl && history.length > 0) {
+        const avg = history.reduce((s, h) => s + h.value, 0) / history.length;
+        midEl.textContent = `Mittel: ${avg.toFixed(2)} ${data.unit}`;
+    }
+}
+
+function updateGauge(id, percent) {
+    const arc = document.getElementById(`gauge-arc-${id}`);
+    const label = document.getElementById(`gauge-label-${id}`);
+    if (!arc) return;
+
+    const circumference = 2 * Math.PI * 54;
+    const offset = circumference * (1 - percent / 100);
+    arc.style.strokeDashoffset = offset;
+    if (label) label.textContent = `${Math.round(percent)}%`;
 }
 
 function createCard(data) {
     const grid = document.getElementById("sensor-grid");
+    const visual = VISUAL_MAP[data.category] || VISUAL_MAP.default;
     const isVoltage = data.type === "voltage";
     const color   = isVoltage ? "#3b82f6" : "#10b981";
     const colorBg = isVoltage ? "rgba(59,130,246,0.08)" : "rgba(16,185,129,0.08)";
@@ -149,88 +129,80 @@ function createCard(data) {
     card.className = `sensor-card ${data.type}`;
     card.id = `card-${data.id}`;
 
+    const bodyHtml = visual === "gauge"
+        ? `
+        <div class="gauge-wrap">
+            <svg viewBox="0 0 120 120" class="gauge-svg">
+                <circle cx="60" cy="60" r="54" class="gauge-track"></circle>
+                <circle cx="60" cy="60" r="54" class="gauge-arc" id="gauge-arc-${data.id}"
+                    style="stroke:${color}"></circle>
+            </svg>
+            <div class="gauge-center">
+                <span class="gauge-percent" id="gauge-label-${data.id}">0%</span>
+            </div>
+        </div>
+        `
+        : `
+        <div class="chart-container">
+            <canvas id="chart-${data.id}"></canvas>
+        </div>
+        `;
+
     card.innerHTML = `
         <div class="sensor-header">
             <div class="sensor-title">
                 <span class="sensor-name">${data.name}</span>
-                <span class="sensor-type-badge">${isVoltage ? "0–10V" : "4–20mA"}</span>
+                <span class="sensor-type-badge">${isVoltage ? "0â€“10V" : "4â€“20mA"}</span>
             </div>
             <div class="sensor-right">
                 <div class="sensor-value-row">
                     <span class="sensor-value" id="value-${data.id}">--</span>
                     <span class="sensor-unit">${data.unit}</span>
                 </div>
-                ${data.type === "current"
-                    ? `<div class="sensor-percent" id="percent-${data.id}">--%</div>`
-                    : ""}
+                <div class="sensor-mid" id="mid-${data.id}">Mittel: --</div>
             </div>
         </div>
-        <div class="progress-bar">
-            <div class="progress-fill" id="fill-${data.id}" style="width:0%"></div>
-        </div>
-        <div class="chart-container">
-            <canvas id="chart-${data.id}"></canvas>
-        </div>
+        ${bodyHtml}
         <div class="timestamp" id="time-${data.id}">--</div>
     `;
 
     grid.appendChild(card);
 
-    const ctx = document.getElementById(`chart-${data.id}`).getContext("2d");
-    charts[data.id] = new Chart(ctx, {
-        type: "line",
-        data: {
-            labels: [],
-            datasets: [{
-                data: [],
-                borderColor: color,
-                borderWidth: 2,
-                pointRadius: 0,
-                tension: 0.3,
-                fill: true,
-                backgroundColor: colorBg,
-            }]
-        },
-        options: {
-            animation: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                x: {
-                    display: true,
-                    ticks: {
-                        font: { size: 9 },
-                        color: "#94a3b8",
-                        maxTicksLimit: 5,
-                        maxRotation: 0,
-                    },
-                    grid: { color: "#f1f5f9" }
-                },
-                y: {
-                    display: true,
-                    ticks: {
-                        font: { size: 9 },
-                        color: "#94a3b8",
-                        maxTicksLimit: 4,
-                    },
-                    grid: { color: "#f1f5f9" }
-                }
+    if (visual !== "gauge") {
+        const ctx = document.getElementById(`chart-${data.id}`).getContext("2d");
+        charts[data.id] = new Chart(ctx, {
+            type: "line",
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: color,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: true,
+                    backgroundColor: colorBg,
+                }]
             },
-            responsive: true,
-            maintainAspectRatio: false,
-            devicePixelRatio: 2,
-        }
-    });
-}
-
-document.getElementById("btn-prev").addEventListener("click", () => {
-    if (currentPage > 0) goToPage(currentPage - 1);
-});
-
-document.getElementById("btn-next").addEventListener("click", () => {
-    if (currentPage < totalPages() - 1) goToPage(currentPage + 1);
-});
-
-function goToPage(page) {
-    currentPage = page;
-    rebuildGrid();
+            options: {
+                animation: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: { font: { size: 9 }, color: "#94a3b8", maxTicksLimit: 5, maxRotation: 0 },
+                        grid: { color: "#f1f5f9" }
+                    },
+                    y: {
+                        display: true,
+                        ticks: { font: { size: 9 }, color: "#94a3b8", maxTicksLimit: 4 },
+                        grid: { color: "#f1f5f9" }
+                    }
+                },
+                responsive: true,
+                maintainAspectRatio: false,
+                devicePixelRatio: 2,
+            }
+        });
+    }
 }

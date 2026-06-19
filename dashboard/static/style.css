@@ -17,7 +17,7 @@ header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 6px 16px;
+    padding: 8px 16px;
     background: #ffffff;
     border-bottom: 1px solid #e2e8f0;
     height: 40px;
@@ -27,41 +27,6 @@ h1 {
     font-size: 0.95rem;
     font-weight: 700;
     color: #1e293b;
-}
-
-.header-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-button {
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    padding: 4px 12px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    color: #1e293b;
-    font-weight: 600;
-    transition: background 0.2s;
-}
-
-button:hover:not(:disabled) {
-    background: #e2e8f0;
-}
-
-button:disabled {
-    opacity: 0.35;
-    cursor: default;
-}
-
-#page-indicator {
-    font-size: 0.8rem;
-    color: #64748b;
-    font-weight: 600;
-    min-width: 36px;
-    text-align: center;
 }
 
 .status {
@@ -84,23 +49,20 @@ button:disabled {
 }
 
 main {
-    padding: 8px 10px;
+    padding: 10px 12px;
     height: calc(480px - 40px);
-    overflow: hidden;
 }
 
 #sensor-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-    gap: 8px;
+    gap: 10px;
     height: 100%;
 }
 
 .sensor-card {
     background: #ffffff;
-    border-radius: 8px;
-    padding: 8px 12px 4px 12px;
+    border-radius: 10px;
+    padding: 10px 14px 6px 14px;
     border: 1px solid #e2e8f0;
     border-top: 3px solid #e2e8f0;
     display: flex;
@@ -122,20 +84,20 @@ main {
 .sensor-title {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
 }
 
 .sensor-name {
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     font-weight: 700;
     color: #64748b;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
+    letter-spacing: 0.5px;
 }
 
 .sensor-type-badge {
-    font-size: 0.58rem;
-    padding: 1px 5px;
+    font-size: 0.6rem;
+    padding: 2px 6px;
     border-radius: 6px;
     font-weight: 600;
     width: fit-content;
@@ -163,46 +125,71 @@ main {
 }
 
 .sensor-value {
-    font-size: 1.8rem;
+    font-size: 1.7rem;
     font-weight: 800;
     color: #0f172a;
     line-height: 1;
 }
 
 .sensor-unit {
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     font-weight: 600;
     color: #94a3b8;
 }
 
-.sensor-percent {
-    font-size: 0.68rem;
+.sensor-mid {
+    font-size: 0.62rem;
     color: #94a3b8;
-    margin-top: 1px;
+    margin-top: 2px;
 }
-
-.progress-bar {
-    height: 3px;
-    background: #f1f5f9;
-    border-radius: 2px;
-    margin-bottom: 6px;
-    overflow: hidden;
-    flex-shrink: 0;
-}
-
-.progress-fill {
-    height: 100%;
-    border-radius: 2px;
-    transition: width 0.5s ease;
-}
-
-.voltage .progress-fill { background: #3b82f6; }
-.current .progress-fill { background: #10b981; }
 
 .chart-container {
     flex: 1;
     position: relative;
     min-height: 0;
+}
+
+.gauge-wrap {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+}
+
+.gauge-svg {
+    width: 90px;
+    height: 90px;
+    transform: rotate(-90deg);
+}
+
+.gauge-track {
+    fill: none;
+    stroke: #f1f5f9;
+    stroke-width: 10;
+}
+
+.gauge-arc {
+    fill: none;
+    stroke-width: 10;
+    stroke-linecap: round;
+    stroke-dasharray: 339.3;
+    stroke-dashoffset: 339.3;
+    transition: stroke-dashoffset 0.5s ease;
+}
+
+.gauge-center {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.gauge-percent {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #0f172a;
 }
 
 .timestamp {
