@@ -3,14 +3,9 @@ aiosqlite==0.22.1
 asyncua==1.1.8
 cffi==2.0.0
 cryptography==48.0.0
-opcua-client==0.8.4
-opcua-widgets==0.6.1
 paho-mqtt==2.1.0
 pycparser==3.0
 pyOpenSSL==26.2.0
-PyQt5==5.15.11
-PyQt5-Qt5==5.15.19
-PyQt5_sip==12.18.0
 python-dateutil==2.9.0.post0
 pytz==2026.2
 six==1.17.0
