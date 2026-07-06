@@ -1,4 +1,4 @@
-import random
+≈≈import random
 import time
 from config.settings import RUNNING_ON_PI, SENSOR_CHANNELS
 
@@ -16,14 +16,14 @@ def read_sensors():
 # one new function and registering it below.
 
 def _convert_voltage(voltage_at_adc):
-    # reverse the 22k/10k divider: factor 32/10 = 3.2
-    real_value = round(voltage_at_adc * 3.2, 3)
-    return {"value": real_value, "unit": "V"}
+        current_ma = round(voltage_at_adc / 150 * 1000, 3)
+        percent = round((current_ma - 4.0) / 16.0 * 100, 1)
+        return {"value": current_ma, "percent": percent, "unit": "mA"}
 
 
 def _convert_current(voltage_at_adc):
-    # 150Ω shunt, no extra divider
-    current_ma = round(voltage_at_adc / 150 * 1000, 3)
+    voltage_at_shunt = voltage_at_adc * 2.0
+    current_ma = round(voltage_at_shunt / 250 * 1000, 3)
     percent = round((current_ma - 4.0) / 16.0 * 100, 1)
     return {"value": current_ma, "percent": percent, "unit": "mA"}
 
