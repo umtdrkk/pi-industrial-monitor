@@ -1,92 +1,126 @@
+/* ── RESET ───────────────────────────────────────────────
+   Remove default browser margins, padding and box model
+   inconsistencies so everything behaves predictably */
 * {
     margin: 0;
     padding: 0;
-    box-sizing: border-box;
+    box-sizing: border-box; /* width includes padding and border, not added on top */
 }
 
+/* ── ROOT LAYOUT ─────────────────────────────────────────
+   Fixed 800x480px — matches the 5" touch display resolution exactly.
+   overflow: hidden prevents scrollbars from appearing */
 html, body {
     width: 800px;
     height: 480px;
     overflow: hidden;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #f4f6f9;
-    color: #1e293b;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; /* system font stack — looks native on any OS */
+    background: #f4f6f9; /* light grey page background */
+    color: #1e293b;       /* dark slate default text color */
 }
 
+/* ── HEADER BAR ──────────────────────────────────────────
+   Top bar showing the app title and connection status.
+   Fixed height of 40px, remaining space goes to the sensor grid */
 header {
     display: flex;
-    justify-content: space-between;
+    justify-content: space-between; /* title left, status badge right */
     align-items: center;
     padding: 8px 16px;
     background: #ffffff;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid #e2e8f0; /* subtle separator line */
     height: 40px;
 }
 
+/* App title in the header */
 h1 {
     font-size: 0.95rem;
     font-weight: 700;
     color: #1e293b;
 }
 
+/* ── CONNECTION STATUS BADGE ─────────────────────────────
+   Small pill-shaped badge showing MQTT connection state.
+   Color changes depending on .connected or .disconnected class */
 .status {
     font-size: 0.7rem;
     padding: 3px 10px;
-    border-radius: 20px;
+    border-radius: 20px; /* fully rounded pill shape */
     font-weight: 600;
 }
 
+/* Green badge — MQTT broker is connected */
 .status.connected {
     background: #dcfce7;
     color: #16a34a;
     border: 1px solid #86efac;
 }
 
+/* Red badge — MQTT broker is disconnected */
 .status.disconnected {
     background: #fee2e2;
     color: #dc2626;
     border: 1px solid #fca5a5;
 }
 
+/* ── MAIN CONTENT AREA ───────────────────────────────────
+   Takes up all remaining height below the header (480 - 40 = 440px).
+   Contains the sensor grid */
 main {
     padding: 10px 12px;
     height: calc(480px - 40px);
 }
 
+/* ── SENSOR GRID ─────────────────────────────────────────
+   CSS Grid that holds all sensor cards.
+   Columns and rows are set dynamically by JS (rebalanceGrid)
+   based on how many sensors are connected */
 #sensor-grid {
     display: grid;
-    gap: 10px;
-    height: 100%;
+    gap: 10px;    /* space between cards */
+    height: 100%; /* fill the full main area */
 }
 
+/* ── SENSOR CARD ─────────────────────────────────────────
+   Individual card for each sensor.
+   Flexbox column so children stack vertically.
+   border-top color is overridden per sensor type below */
 .sensor-card {
     background: #ffffff;
     border-radius: 10px;
     padding: 10px 14px 6px 14px;
     border: 1px solid #e2e8f0;
-    border-top: 3px solid #e2e8f0;
+    border-top: 3px solid #e2e8f0; /* default — overridden by type classes below */
     display: flex;
-    flex-direction: column;
-    overflow: hidden;
+    flex-direction: column; /* header → chart/gauge → averages → timestamp stack vertically */
+    overflow: hidden;       /* clip any content that overflows the card */
 }
 
+/* Blue accent for voltage (0-10V) sensors */
 .sensor-card.voltage { border-top-color: #3b82f6; }
+
+/* Green accent for current (4-20mA) sensors */
 .sensor-card.current { border-top-color: #10b981; }
 
+/* ── CARD HEADER ─────────────────────────────────────────
+   Top section of each card — sensor name/badge on the left,
+   live value + unit on the right */
 .sensor-header {
     display: flex;
-    justify-content: space-between;
+    justify-content: space-between; /* title left, value right */
     align-items: flex-start;
     margin-bottom: 4px;
-    flex-shrink: 0;
+    flex-shrink: 0; /* don't shrink this section when card is small */
 }
 
+/* Left column inside header — name and type badge */
 .sensor-title {
     display: flex;
     flex-direction: column;
     gap: 3px;
 }
 
+/* Sensor name label — e.g. "SPANNUNGSSENSOR" */
 .sensor-name {
     font-size: 0.7rem;
     font-weight: 700;
@@ -95,35 +129,41 @@ main {
     letter-spacing: 0.5px;
 }
 
+/* Small badge showing signal type — e.g. "0–10V" or "4–20mA" */
 .sensor-type-badge {
     font-size: 0.6rem;
     padding: 2px 6px;
     border-radius: 6px;
     font-weight: 600;
-    width: fit-content;
+    width: fit-content; /* badge only as wide as its text */
 }
 
+/* Blue tinted badge for voltage sensors */
 .voltage .sensor-type-badge {
     background: #eff6ff;
     color: #3b82f6;
 }
 
+/* Green tinted badge for current sensors */
 .current .sensor-type-badge {
     background: #f0fdf4;
     color: #10b981;
 }
 
+/* Right column inside header — live value and unit */
 .sensor-right {
     text-align: right;
 }
 
+/* Row containing the big number and its unit */
 .sensor-value-row {
     display: flex;
-    align-items: baseline;
+    align-items: baseline; /* align number and unit on their text baseline */
     gap: 4px;
     justify-content: flex-end;
 }
 
+/* The big live value number — e.g. "7.43" */
 .sensor-value {
     font-size: 1.7rem;
     font-weight: 800;
@@ -131,24 +171,33 @@ main {
     line-height: 1;
 }
 
+/* Unit label next to the value — e.g. "V" or "mA" */
 .sensor-unit {
     font-size: 0.78rem;
     font-weight: 600;
-    color: #94a3b8;
+    color: #94a3b8; /* muted grey */
 }
 
+/* Live rolling average from the last 60 in-memory readings */
 .sensor-mid {
     font-size: 0.62rem;
     color: #94a3b8;
     margin-top: 2px;
 }
 
+/* ── CHART CONTAINER ─────────────────────────────────────
+   Holds the Chart.js canvas for line chart sensors.
+   flex: 1 makes it fill all available vertical space in the card.
+   min-height: 0 is required for flex children to shrink properly */
 .chart-container {
     flex: 1;
     position: relative;
     min-height: 0;
 }
 
+/* ── GAUGE CONTAINER ─────────────────────────────────────
+   Holds the SVG gauge for distance sensors.
+   Centers the gauge circle both horizontally and vertically */
 .gauge-wrap {
     flex: 1;
     position: relative;
@@ -158,27 +207,34 @@ main {
     min-height: 0;
 }
 
+/* The SVG element containing the gauge circles.
+   Rotated -90deg so the arc starts at the top (12 o'clock) instead of the right */
 .gauge-svg {
     width: 90px;
     height: 90px;
     transform: rotate(-90deg);
 }
 
+/* Background track circle — always full, light grey */
 .gauge-track {
     fill: none;
     stroke: #f1f5f9;
     stroke-width: 10;
 }
 
+/* Foreground arc — partially drawn based on the sensor value percentage.
+   stroke-dasharray sets the full circumference (2 * PI * 54 = 339.3).
+   stroke-dashoffset is animated by JS to show the correct fill amount */
 .gauge-arc {
     fill: none;
     stroke-width: 10;
-    stroke-linecap: round;
-    stroke-dasharray: 339.3;
-    stroke-dashoffset: 339.3;
-    transition: stroke-dashoffset 0.5s ease;
+    stroke-linecap: round;          /* rounded ends on the arc */
+    stroke-dasharray: 339.3;        /* full circle circumference in px */
+    stroke-dashoffset: 339.3;       /* start at 0% (fully hidden) */
+    transition: stroke-dashoffset 0.5s ease; /* smooth animation when value changes */
 }
 
+/* Centered overlay inside the gauge showing the percentage text */
 .gauge-center {
     position: absolute;
     display: flex;
@@ -186,16 +242,58 @@ main {
     justify-content: center;
 }
 
+/* The percentage number shown in the middle of the gauge */
 .gauge-percent {
     font-size: 1.1rem;
     font-weight: 800;
     color: #0f172a;
 }
 
+/* ── TIMESTAMP ───────────────────────────────────────────
+   Small text at the bottom right of each card showing
+   when the last reading was received */
 .timestamp {
     font-size: 0.58rem;
     color: #cbd5e1;
     text-align: right;
     margin-top: 2px;
-    flex-shrink: 0;
+    flex-shrink: 0; /* don't shrink this section */
 }
+
+/* ── HISTORICAL AVERAGES ROW ─────────────────────────────
+   Shows 1min / 10min / 1h / 24h / 7d averages fetched from
+   the Flask API → InfluxDB. Updates every 30 seconds.
+   Sits between the chart/gauge and the timestamp */
+.sensor-averages {
+    display: flex;
+    justify-content: space-between; /* spread the 5 time range items evenly */
+    align-items: center;
+    padding: 4px 0 2px 0;
+    border-top: 1px solid #f1f5f9;  /* subtle separator above the averages row */
+    margin-top: 4px;
+    flex-shrink: 0; /* don't shrink — always visible */
+}
+
+/* Each individual time range item — label above, value below */
+.avg-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    font-size: 0.62rem;
+    color: #0f172a;
+    font-weight: 600;
+}
+
+/* The time range label above each average value — e.g. "1MIN", "24H" */
+.avg-label {
+    font-size: 0.55rem;
+    color: #94a3b8;          /* muted grey — less prominent than the value */
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+/* Color the average values to match their sensor type */
+.voltage .avg-item { color: #3b82f6; } /* blue for voltage sensors */
+.current .avg-item { color: #10b981; } /* green for current sensors */

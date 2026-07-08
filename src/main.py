@@ -7,13 +7,16 @@ import threading
 # time - used for the sleep/delay between sensor reads
 import time
 
+# Import Flask starter function
+from src.flask_api import start_flask
+
 # Import our own modules: sensor reading, MQTT functions, and the OPC UA server
 from src.sensors import read_sensors
 from src.mqtt_client import connect, publish, disconnect
 from src.opcua_server import start_opcua_server
 
 # Import InfluxDB functions:
-# init_db      - creates the database if it doesn't exist yet
+# init_db       - creates the database if it doesn't exist yet
 # write_reading - writes a single sensor reading to InfluxDB
 from src.influx_client import init_db, write_reading
 
@@ -51,7 +54,12 @@ def main():
     # This runs once at startup before anything else starts
     init_db()
 
-    # Create a separate thread to run the MQTT loop so it doesn't block the OPC UA server
+    # Start Flask API server in background thread
+    # Serves historical data endpoints on port 5000
+    flask_thread = threading.Thread(target=start_flask, daemon=True)
+    flask_thread.start()
+
+    # Start MQTT loop in background thread so it doesn't block the OPC UA server
     # "daemon=True" means this thread automatically stops when the main program exits
     mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
     mqtt_thread.start()

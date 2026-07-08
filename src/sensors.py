@@ -96,6 +96,10 @@ def _read_real_sensors():
 
         voltage_at_adc = raw * (3.3 / 4096)
 
+        # DEBUG — prints raw ADC value and voltage before conversion
+        # Remove this line after validation is complete
+        print(f"[DEBUG] Channel {channel['id']} | raw={raw} | voltage_at_adc={voltage_at_adc:.3f}V")
+
         result = converter(voltage_at_adc)
 
         readings.append({

@@ -3,6 +3,10 @@ const MQTT_PORT = 9001;
 const MQTT_TOPIC = "factory/#";
 const MAX_HISTORY = 60;
 
+// Flask API base URL — same host as dashboard, port 5001
+// On Pi this resolves to the Pi's IP, on Mac to localhost
+const API_BASE = `http://${window.location.hostname}:5001`;
+
 // category -> visual type. Add a new category here and every
 // sensor with that category automatically gets the right chart.
 const VISUAL_MAP = {
@@ -39,6 +43,8 @@ function handleMessage(data) {
         sensorData[data.id] = { history: [] };
         createCard(data);
         rebalanceGrid();
+        // Fetch averages immediately when a new sensor card is created
+        fetchAverages(data.id);
     }
 
     sensorData[data.id].history.push({
@@ -51,6 +57,41 @@ function handleMessage(data) {
 
     updateCard(data);
 }
+
+// Fetches historical averages from Flask API and updates the card
+async function fetchAverages(sensorId) {
+    try {
+        const response = await fetch(`${API_BASE}/api/sensors/${sensorId}/average`);
+        const data = await response.json();
+        updateAverages(sensorId, data.averages);
+    } catch (err) {
+        // Flask might not be running — fail silently, live data still works
+        console.warn(`Could not fetch averages for sensor ${sensorId}:`, err);
+    }
+}
+
+// Updates the averages section on a sensor card
+function updateAverages(sensorId, averages) {
+    const avgEl = document.getElementById(`avg-${sensorId}`);
+    if (!avgEl) return;
+
+    // Format each average value, show "--" if null (not enough data yet)
+    const fmt = (val) => val !== null ? val.toFixed(2) : "--";
+
+    avgEl.innerHTML = `
+        <span class="avg-item"><span class="avg-label">1min</span> ${fmt(averages["1min"])}</span>
+        <span class="avg-item"><span class="avg-label">10min</span> ${fmt(averages["10min"])}</span>
+        <span class="avg-item"><span class="avg-label">1h</span> ${fmt(averages["1h"])}</span>
+        <span class="avg-item"><span class="avg-label">24h</span> ${fmt(averages["24h"])}</span>
+        <span class="avg-item"><span class="avg-label">7d</span> ${fmt(averages["7d"])}</span>
+    `;
+}
+
+// Refresh all sensor averages every 30 seconds
+// Live values update via MQTT every second, averages don't need to be that frequent
+setInterval(() => {
+    Object.keys(sensorData).forEach(id => fetchAverages(id));
+}, 30000);
 
 // Adjusts the grid column count based on how many sensors exist,
 // so the layout works whether there are 2 or 10 sensors.
@@ -99,11 +140,11 @@ function updateCard(data) {
         }
     }
 
-    // mid value (simple running average of buffered history)
+    // Live mid value from in-memory buffer (last 60 readings)
     const midEl = document.getElementById(`mid-${data.id}`);
     if (midEl && history.length > 0) {
         const avg = history.reduce((s, h) => s + h.value, 0) / history.length;
-        midEl.textContent = `Mittel: ${avg.toFixed(2)} ${data.unit}`;
+        midEl.textContent = `Live Mittel: ${avg.toFixed(2)} ${data.unit}`;
     }
 }
 
@@ -152,17 +193,24 @@ function createCard(data) {
         <div class="sensor-header">
             <div class="sensor-title">
                 <span class="sensor-name">${data.name}</span>
-                <span class="sensor-type-badge">${isVoltage ? "0â€“10V" : "4â€“20mA"}</span>
+                <span class="sensor-type-badge">${isVoltage ? "0–10V" : "4–20mA"}</span>
             </div>
             <div class="sensor-right">
                 <div class="sensor-value-row">
                     <span class="sensor-value" id="value-${data.id}">--</span>
                     <span class="sensor-unit">${data.unit}</span>
                 </div>
-                <div class="sensor-mid" id="mid-${data.id}">Mittel: --</div>
+                <div class="sensor-mid" id="mid-${data.id}">Live Mittel: --</div>
             </div>
         </div>
         ${bodyHtml}
+        <div class="sensor-averages" id="avg-${data.id}">
+            <span class="avg-item"><span class="avg-label">1min</span> --</span>
+            <span class="avg-item"><span class="avg-label">10min</span> --</span>
+            <span class="avg-item"><span class="avg-label">1h</span> --</span>
+            <span class="avg-item"><span class="avg-label">24h</span> --</span>
+            <span class="avg-item"><span class="avg-label">7d</span> --</span>
+        </div>
         <div class="timestamp" id="time-${data.id}">--</div>
     `;
 
