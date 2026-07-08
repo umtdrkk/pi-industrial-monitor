@@ -1,3 +1,26 @@
+# asyncio - needed to run the OPC UA server (which is async)
+import asyncio
+
+# threading - lets us run multiple things "at the same time" in one program
+import threading
+
+# time - used for the sleep/delay between sensor reads
+import time
+
+# Import our own modules: sensor reading, MQTT functions, and the OPC UA server
+from src.sensors import read_sensors
+from src.mqtt_client import connect, publish, disconnect
+from src.opcua_server import start_opcua_server
+
+# Import InfluxDB functions:
+# init_db      - creates the database if it doesn't exist yet
+# write_reading - writes a single sensor reading to InfluxDB
+from src.influx_client import init_db, write_reading
+
+# Import the configured delay (in seconds) between sensor reads
+from config.settings import SENSOR_READ_INTERVAL
+
+
 def mqtt_loop():
     # This function runs in its own thread, handling the MQTT side of things
     connect()
