@@ -8,11 +8,11 @@
 }
 
 /* ── ROOT LAYOUT ─────────────────────────────────────────
-   Fixed 800x480px — matches the 5" touch display resolution exactly.
+   Fixed 1280x720px — matches the 5" display in landscape mode (720x1280 rotated).
    overflow: hidden prevents scrollbars from appearing */
 html, body {
-    width: 800px;
-    height: 480px;
+    width: 1280px;
+    height: 720px;
     overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; /* system font stack — looks native on any OS */
     background: #f4f6f9; /* light grey page background */
@@ -21,20 +21,20 @@ html, body {
 
 /* ── HEADER BAR ──────────────────────────────────────────
    Top bar showing the app title and connection status.
-   Fixed height of 44px, remaining space goes to the sensor grid */
+   Fixed height of 56px, remaining space goes to the sensor grid */
 header {
     display: flex;
     justify-content: space-between; /* title left, status badge right */
     align-items: center;
-    padding: 8px 16px;
+    padding: 10px 24px;
     background: #ffffff;
     border-bottom: 1px solid #e2e8f0; /* subtle separator line */
-    height: 44px;
+    height: 56px;
 }
 
 /* App title in the header */
 h1 {
-    font-size: 1.05rem;  /* slightly bigger than before */
+    font-size: 1.2rem;
     font-weight: 700;
     color: #1e293b;
 }
@@ -43,8 +43,8 @@ h1 {
    Small pill-shaped badge showing MQTT connection state.
    Color changes depending on .connected or .disconnected class */
 .status {
-    font-size: 0.75rem;  /* bigger for easier reading on 5" */
-    padding: 3px 10px;
+    font-size: 0.85rem;
+    padding: 4px 14px;
     border-radius: 20px; /* fully rounded pill shape */
     font-weight: 600;
 }
@@ -64,11 +64,11 @@ h1 {
 }
 
 /* ── MAIN CONTENT AREA ───────────────────────────────────
-   Takes up all remaining height below the header (480 - 44 = 436px).
+   Takes up all remaining height below the header (720 - 56 = 664px).
    Contains the sensor grid */
 main {
-    padding: 10px 12px;
-    height: calc(480px - 44px);
+    padding: 16px 20px;
+    height: calc(720px - 56px);
 }
 
 /* ── SENSOR GRID ─────────────────────────────────────────
@@ -77,7 +77,7 @@ main {
    based on how many sensors are connected */
 #sensor-grid {
     display: grid;
-    gap: 10px;    /* space between cards */
+    gap: 16px;    /* more space between cards on larger display */
     height: 100%; /* fill the full main area */
 }
 
@@ -87,10 +87,10 @@ main {
    border-top color is overridden per sensor type below */
 .sensor-card {
     background: #ffffff;
-    border-radius: 12px;
-    padding: 14px 18px 8px 18px; /* more padding for bigger feel */
+    border-radius: 16px;
+    padding: 20px 24px 12px 24px; /* generous padding for larger display */
     border: 1px solid #e2e8f0;
-    border-top: 4px solid #e2e8f0; /* thicker top border for visual weight */
+    border-top: 5px solid #e2e8f0; /* thicker top border for visual weight */
     display: flex;
     flex-direction: column; /* header → chart/gauge → averages → timestamp stack vertically */
     overflow: hidden;       /* clip any content that overflows the card */
@@ -109,7 +109,7 @@ main {
     display: flex;
     justify-content: space-between; /* title left, value right */
     align-items: flex-start;
-    margin-bottom: 6px;
+    margin-bottom: 10px;
     flex-shrink: 0; /* don't shrink this section when card is small */
 }
 
@@ -117,23 +117,23 @@ main {
 .sensor-title {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
 }
 
 /* Sensor name label — e.g. "SPANNUNGSSENSOR" */
 .sensor-name {
-    font-size: 0.85rem;  /* bigger — was 0.7rem */
+    font-size: 1.05rem;
     font-weight: 700;
     color: #64748b;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.6px;
 }
 
 /* Small badge showing signal type — e.g. "0–10V" or "4–20mA" */
 .sensor-type-badge {
-    font-size: 0.68rem;  /* bigger — was 0.6rem */
-    padding: 2px 8px;
-    border-radius: 6px;
+    font-size: 0.8rem;
+    padding: 3px 10px;
+    border-radius: 8px;
     font-weight: 600;
     width: fit-content; /* badge only as wide as its text */
 }
@@ -159,13 +159,13 @@ main {
 .sensor-value-row {
     display: flex;
     align-items: baseline; /* align number and unit on their text baseline */
-    gap: 5px;
+    gap: 6px;
     justify-content: flex-end;
 }
 
 /* The big live value number — e.g. "7.43" */
 .sensor-value {
-    font-size: 2.4rem;  /* much bigger — was 1.7rem */
+    font-size: 3.8rem;  /* large and readable on 1280x720 */
     font-weight: 800;
     color: #0f172a;
     line-height: 1;
@@ -173,16 +173,16 @@ main {
 
 /* Unit label next to the value — e.g. "V" or "mA" */
 .sensor-unit {
-    font-size: 1rem;  /* bigger — was 0.78rem */
+    font-size: 1.3rem;
     font-weight: 600;
     color: #94a3b8; /* muted grey */
 }
 
 /* Live rolling average from the last 60 in-memory readings */
 .sensor-mid {
-    font-size: 0.75rem;  /* bigger — was 0.62rem */
+    font-size: 0.9rem;
     color: #94a3b8;
-    margin-top: 3px;
+    margin-top: 4px;
 }
 
 /* ── CHART CONTAINER ─────────────────────────────────────
@@ -210,8 +210,8 @@ main {
 /* The SVG element containing the gauge circles.
    Rotated -90deg so the arc starts at the top (12 o'clock) instead of the right */
 .gauge-svg {
-    width: 120px;  /* bigger — was 90px */
-    height: 120px;
+    width: 200px;  /* much larger gauge for 1280x720 */
+    height: 200px;
     transform: rotate(-90deg);
 }
 
@@ -244,7 +244,7 @@ main {
 
 /* The percentage number shown in the middle of the gauge */
 .gauge-percent {
-    font-size: 1.4rem;  /* bigger — was 1.1rem */
+    font-size: 2rem;  /* large percentage number inside gauge */
     font-weight: 800;
     color: #0f172a;
 }
@@ -253,10 +253,10 @@ main {
    Small text at the bottom right of each card showing
    when the last reading was received */
 .timestamp {
-    font-size: 0.65rem;  /* slightly bigger — was 0.58rem */
+    font-size: 0.78rem;
     color: #cbd5e1;
     text-align: right;
-    margin-top: 3px;
+    margin-top: 4px;
     flex-shrink: 0; /* don't shrink this section */
 }
 
@@ -268,9 +268,9 @@ main {
     display: flex;
     justify-content: space-between; /* spread the 5 time range items evenly */
     align-items: center;
-    padding: 5px 0 3px 0;
+    padding: 8px 0 4px 0;
     border-top: 1px solid #f1f5f9;  /* subtle separator above the averages row */
-    margin-top: 5px;
+    margin-top: 8px;
     flex-shrink: 0; /* don't shrink — always visible */
 }
 
@@ -279,15 +279,15 @@ main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
-    font-size: 0.75rem;  /* bigger — was 0.62rem */
+    gap: 3px;
+    font-size: 0.92rem;
     color: #0f172a;
     font-weight: 600;
 }
 
 /* The time range label above each average value — e.g. "1MIN", "24H" */
 .avg-label {
-    font-size: 0.62rem;  /* bigger — was 0.55rem */
+    font-size: 0.72rem;
     color: #94a3b8;          /* muted grey — less prominent than the value */
     font-weight: 400;
     text-transform: uppercase;
