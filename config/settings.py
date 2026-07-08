@@ -16,8 +16,8 @@ RUNNING_ON_PI = False
 #   "pressure"    -> line chart with threshold
 #   anything else -> line chart (default)
 SENSOR_CHANNELS = [
-    {"id": 1, "type": "voltage", "name": "Distanzsensor", "category": "distance"},
-    {"id": 2, "type": "current", "name": "Drucksensor", "category": "pressure"},
+    {"id": 1, "type": "voltage", "name": "Spannungssensor"},
+    {"id": 2, "type": "current", "name": "Ultraschallsensor"},
 ]
 
 NUM_SENSORS = len(SENSOR_CHANNELS)
