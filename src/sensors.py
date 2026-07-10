@@ -31,28 +31,29 @@ def _convert_voltage(voltage_at_adc):
     Converts ADC voltage to real-world distance in mm.
 
     Hardware: Capacitive distance sensor (15-500mm range)
-    Signal type: 0-10V analog output, configured in INVERSE mode (10V...0V)
-        10V = no object detected (> 500mm away)
-        0V  = object at minimum distance (15mm)
+    Signal type: 0-10V analog output, NORMAL mode (0V...10V)
+        0V   = object at minimum distance (15mm)
+        10V  = no object detected (> 500mm away)
 
-    Signal conditioning: 22kΩ + 10kΩ voltage divider
-        scales 0-10V sensor output down to 0-3.125V for the MCP3208 (max 3.3V)
-        reverse factor: 32/10 = 3.2
+    Signal conditioning: 33kΩ + 10.5kΩ voltage divider
+        scales 0-10V sensor output down to ~0-2.5V for MCP3208 (max 3.3V)
+        reverse factor: (33 + 10.5) / 10.5 = 43.5 / 10.5 = 4.143
 
-    Distance formula derived from datasheet (Erfassungsbereich: 15-500mm):
-        real_voltage = voltage_at_adc × 3.2
-        distance_mm  = (1 - real_voltage / 10) × 485 + 15
+    Distance formula (linear, normal mode):
+        real_voltage = voltage_at_adc × 4.143
+        distance_mm  = (real_voltage / 10) × 485 + 15
             where 485 = sensor span (500mm - 15mm)
                    15 = minimum detectable distance in mm
     """
-    # Step 1: reverse the voltage divider to get the actual sensor output voltage
-    real_voltage = round(voltage_at_adc * 3.2, 3)
+    # Step 1: reverse the voltage divider using actual measured resistor values
+    # R1 = 33kΩ, R2 = 10.5kΩ → factor = (R1+R2)/R2 = 43.5/10.5 = 4.143
+    real_voltage = round(voltage_at_adc * 4.143, 3)
 
-    # Step 2: convert voltage to distance using inverse sensor characteristic
-    # 10V → 15mm (closest), 0V → 500mm (furthest / nothing detected)
-    distance_mm = round((1 - real_voltage / 10) * 485 + 15, 1)
+    # Step 2: convert voltage to distance — normal mode (0V=close, 10V=far)
+    # 0V → 15mm (closest), 10V → 500mm (furthest / nothing detected)
+    distance_mm = round((real_voltage / 10) * 485 + 15, 1)
 
-    # Step 3: clamp to valid sensor range (15-500mm) to avoid out-of-range values
+    # Step 3: clamp to valid sensor range (15-500mm)
     distance_mm = max(15.0, min(500.0, distance_mm))
 
     return {
@@ -60,7 +61,6 @@ def _convert_voltage(voltage_at_adc):
         "unit": "mm",
         "voltage": real_voltage, # raw sensor voltage — shown as secondary info on dashboard
     }
-
 
 def _convert_current(voltage_at_adc):
     """
