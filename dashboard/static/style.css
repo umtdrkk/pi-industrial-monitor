@@ -297,3 +297,42 @@ main {
 /* Color the average values to match their sensor type */
 .voltage .avg-item { color: #3b82f6; } /* blue for voltage sensors */
 .current .avg-item { color: #10b981; } /* green for current sensors */
+
+/* ── AVERAGE ITEMS — now clickable buttons ───────────────
+   Cursor pointer and hover effect to indicate interactivity */
+.avg-item {
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+.avg-item:hover {
+    opacity: 0.7;
+}
+
+/* Active time range button — highlighted when selected */
+.avg-item.avg-active .avg-label {
+    color: #0f172a;
+    font-weight: 700;
+}
+
+.voltage .avg-item.avg-active { color: #1d4ed8; }
+.current .avg-item.avg-active { color: #047857; }
+
+/* ── HISTORY CHART CONTAINER ─────────────────────────────
+   Shown below the averages row when a time range is clicked.
+   Hidden by default. */
+.history-container {
+    height: 80px;       /* compact history chart */
+    position: relative;
+    margin-top: 6px;
+    flex-shrink: 0;
+}
+
+/* Empty state message when no data available for selected range */
+.history-empty {
+    font-size: 0.7rem;
+    color: #94a3b8;
+    font-style: italic;
+    text-align: center;
+    padding: 8px 0;
+}

@@ -8,7 +8,7 @@ const MQTT_TOPIC = "factory/#"; // Subscribe to all sensor topics
 const MAX_HISTORY = 60;         // Number of data points to keep in memory per sensor
 
 // Flask API base URL — same host as dashboard, port 5001
-// Used to fetch historical averages from InfluxDB
+// Used to fetch historical averages and history from InfluxDB
 const API_BASE = `http://${window.location.hostname}:5001`;
 
 // ── VISUAL MAP ───────────────────────────────────────────
@@ -16,15 +16,17 @@ const API_BASE = `http://${window.location.hostname}:5001`;
 // Add a new category here and every sensor with that category
 // automatically gets the right visualization — no other code changes needed.
 const VISUAL_MAP = {
-    "distance":    "gauge",   // distance sensors → circular gauge (shows % of range)
-    "temperature": "line",    // temperature sensors → line chart (trend matters)
-    "pressure":    "line",    // pressure sensors → line chart (trend matters)
+    "distance":    "line",    // distance sensors → line chart (trend over time)
+    "temperature": "line",    // temperature sensors → line chart
+    "pressure":    "gauge",   // pressure sensors → gauge (0-1 bar fill level)
     "default":     "line",    // anything else → line chart
 };
 
 // ── STATE ────────────────────────────────────────────────
-const sensorData = {};  // stores history arrays per sensor id
-const charts = {};      // stores Chart.js instances per sensor id
+const sensorData = {};       // stores history arrays per sensor id
+const charts = {};           // stores Chart.js live instances per sensor id
+const historyCharts = {};    // stores Chart.js history instances per sensor id
+const activeRange = {};      // tracks which time range button is active per sensor
 let knownSensorCount = 0;
 
 // ── MQTT CLIENT ──────────────────────────────────────────
@@ -54,9 +56,9 @@ function handleMessage(data) {
     // First time we see this sensor — create its card and fetch averages
     if (!sensorData[data.id]) {
         sensorData[data.id] = { history: [] };
+        activeRange[data.id] = null; // no time range selected yet
         createCard(data);
         rebalanceGrid();
-        // Fetch historical averages from Flask API immediately on first data
         fetchAverages(data.id);
     }
 
@@ -66,7 +68,7 @@ function handleMessage(data) {
         time: new Date(data.timestamp * 1000)
     });
 
-    // Keep only the last MAX_HISTORY readings — drop oldest if over limit
+    // Keep only the last MAX_HISTORY readings
     if (sensorData[data.id].history.length > MAX_HISTORY) {
         sensorData[data.id].history.shift();
     }
@@ -87,32 +89,163 @@ async function fetchAverages(sensorId) {
     }
 }
 
-// Updates the averages row at the bottom of a sensor card
+// Updates the averages row — now renders as clickable buttons
 function updateAverages(sensorId, averages) {
     const avgEl = document.getElementById(`avg-${sensorId}`);
     if (!avgEl) return;
 
-    // Show "--" for time ranges with no data yet (e.g. "7d" on first day)
     const fmt = (val) => val !== null ? val.toFixed(2) : "--";
 
+    // Each time range is now a clickable button
+    // Clicking fetches and shows the full history for that range
     avgEl.innerHTML = `
-        <span class="avg-item"><span class="avg-label">1min</span> ${fmt(averages["1min"])}</span>
-        <span class="avg-item"><span class="avg-label">10min</span> ${fmt(averages["10min"])}</span>
-        <span class="avg-item"><span class="avg-label">1h</span> ${fmt(averages["1h"])}</span>
-        <span class="avg-item"><span class="avg-label">24h</span> ${fmt(averages["24h"])}</span>
-        <span class="avg-item"><span class="avg-label">7d</span> ${fmt(averages["7d"])}</span>
+        <span class="avg-item" onclick="toggleHistory(${sensorId}, '1min')">
+            <span class="avg-label">1min</span>
+            <span id="avg-val-${sensorId}-1min">${fmt(averages["1min"])}</span>
+        </span>
+        <span class="avg-item" onclick="toggleHistory(${sensorId}, '10min')">
+            <span class="avg-label">10min</span>
+            <span id="avg-val-${sensorId}-10min">${fmt(averages["10min"])}</span>
+        </span>
+        <span class="avg-item" onclick="toggleHistory(${sensorId}, '1h')">
+            <span class="avg-label">1h</span>
+            <span id="avg-val-${sensorId}-1h">${fmt(averages["1h"])}</span>
+        </span>
+        <span class="avg-item" onclick="toggleHistory(${sensorId}, '24h')">
+            <span class="avg-label">24h</span>
+            <span id="avg-val-${sensorId}-24h">${fmt(averages["24h"])}</span>
+        </span>
+        <span class="avg-item" onclick="toggleHistory(${sensorId}, '7d')">
+            <span class="avg-label">7d</span>
+            <span id="avg-val-${sensorId}-7d">${fmt(averages["7d"])}</span>
+        </span>
     `;
 }
 
+// ── HISTORY TOGGLE ───────────────────────────────────────
+// Called when a time range button is clicked.
+// Fetches historical data from Flask and shows/hides the history chart.
+async function toggleHistory(sensorId, range) {
+    const historyEl = document.getElementById(`history-${sensorId}`);
+    if (!historyEl) return;
+
+    // If same range clicked again — hide the history chart (toggle off)
+    if (activeRange[sensorId] === range) {
+        activeRange[sensorId] = null;
+        historyEl.style.display = "none";
+
+        // Destroy history chart to free memory
+        if (historyCharts[sensorId]) {
+            historyCharts[sensorId].destroy();
+            delete historyCharts[sensorId];
+        }
+
+        // Remove active highlight from all buttons
+        document.querySelectorAll(`#avg-${sensorId} .avg-item`).forEach(el => {
+            el.classList.remove("avg-active");
+        });
+        return;
+    }
+
+    // New range selected — fetch history from Flask API
+    activeRange[sensorId] = range;
+
+    // Highlight the active button
+    document.querySelectorAll(`#avg-${sensorId} .avg-item`).forEach(el => {
+        el.classList.remove("avg-active");
+    });
+    event.currentTarget.classList.add("avg-active");
+
+    try {
+        const response = await fetch(`${API_BASE}/api/sensors/${sensorId}/history/${range}`);
+        const data = await response.json();
+
+        if (data.data.length === 0) {
+            historyEl.style.display = "flex";
+            historyEl.innerHTML = `<span class="history-empty">Keine Daten für ${range} verfügbar</span>`;
+            return;
+        }
+
+        // Show the history container
+        historyEl.style.display = "block";
+
+        // Destroy previous history chart if exists
+        if (historyCharts[sensorId]) {
+            historyCharts[sensorId].destroy();
+        }
+
+        // Get sensor color
+        const card = document.getElementById(`card-${sensorId}`);
+        const isVoltage = card.classList.contains("voltage");
+        const color = isVoltage ? "#3b82f6" : "#10b981";
+        const colorBg = isVoltage ? "rgba(59,130,246,0.08)" : "rgba(16,185,129,0.08)";
+
+        // Build labels and values from InfluxDB data
+        const labels = data.data.map(p => {
+            const d = new Date(p.time);
+            return d.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"});
+        });
+        const values = data.data.map(p => p.value);
+
+        // Create history Chart.js instance
+        const canvas = document.getElementById(`history-canvas-${sensorId}`);
+        historyCharts[sensorId] = new Chart(canvas.getContext("2d"), {
+            type: "line",
+            data: {
+                labels,
+                datasets: [{
+                    data: values,
+                    borderColor: color,
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: true,
+                    backgroundColor: colorBg,
+                }]
+            },
+            options: {
+                animation: false,
+                plugins: {
+                    legend: { display: false },
+                    // Show range label as chart title
+                    title: {
+                        display: true,
+                        text: `Verlauf — letzte ${range}`,
+                        font: { size: 10 },
+                        color: "#94a3b8",
+                        padding: { bottom: 4 }
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        ticks: { font: { size: 8 }, color: "#94a3b8", maxTicksLimit: 6, maxRotation: 0 },
+                        grid: { color: "#f1f5f9" }
+                    },
+                    y: {
+                        display: true,
+                        ticks: { font: { size: 8 }, color: "#94a3b8", maxTicksLimit: 4 },
+                        grid: { color: "#f1f5f9" }
+                    }
+                },
+                responsive: true,
+                maintainAspectRatio: false,
+            }
+        });
+
+    } catch (err) {
+        console.warn(`Could not fetch history for sensor ${sensorId}:`, err);
+        historyEl.style.display = "flex";
+        historyEl.innerHTML = `<span class="history-empty">Fehler beim Laden der Daten</span>`;
+    }
+}
+
 // Refresh all sensor averages every 30 seconds
-// Live values update every second via MQTT — averages don't need to be that frequent
 setInterval(() => {
     Object.keys(sensorData).forEach(id => fetchAverages(id));
 }, 30000);
 
 // ── GRID LAYOUT ──────────────────────────────────────────
-// Adjusts the CSS grid column/row count based on how many sensors exist.
-// Called every time a new sensor card is created.
 function rebalanceGrid() {
     const grid = document.getElementById("sensor-grid");
     const count = Object.keys(sensorData).length;
@@ -130,30 +263,28 @@ function rebalanceGrid() {
 }
 
 // ── CARD UPDATE ──────────────────────────────────────────
-// Called every second when new MQTT data arrives — updates live values on the card
 function updateCard(data) {
     const visual = VISUAL_MAP[data.category] || VISUAL_MAP.default;
 
     const valueEl = document.getElementById(`value-${data.id}`);
     if (!valueEl) return;
 
-    // Update the main live value (distance in mm, pressure in bar etc.)
+    // Update the main live value
     valueEl.textContent = data.value.toFixed(2);
 
-    // For distance sensors — show the raw sensor voltage as secondary info
-    // This helps cross-check the distance conversion math
+    // Secondary voltage for distance sensors
     const voltageEl = document.getElementById(`voltage-${data.id}`);
     if (voltageEl && data.voltage !== undefined) {
         voltageEl.textContent = `(${data.voltage.toFixed(2)} V)`;
     }
 
-    // For pressure sensors — show the raw current as secondary info
+    // Secondary current for pressure sensors
     const currentEl = document.getElementById(`current-${data.id}`);
     if (currentEl && data.current_ma !== undefined) {
         currentEl.textContent = `(${data.current_ma.toFixed(2)} mA)`;
     }
 
-    // Update the timestamp showing when the last reading arrived
+    // Timestamp
     const date = new Date(data.timestamp * 1000);
     const timeEl = document.getElementById(`time-${data.id}`);
     if (timeEl) timeEl.textContent = date.toLocaleTimeString("de-DE");
@@ -161,24 +292,22 @@ function updateCard(data) {
     const history = sensorData[data.id].history;
 
     if (visual === "gauge") {
-        // Distance sensor gauge: closer object = higher fill percentage
-        // Sensor range is 15-500mm (inverse: 10V=15mm, 0V=500mm)
-        // So percent = (500 - distance) / 485 * 100
-        // 15mm (closest) → 100%, 500mm (furthest) → 0%
-        const percent = Math.min(Math.max((500 - data.value) / 485 * 100, 0), 100);
+        // Pressure gauge: 0 bar = 0%, 1 bar = 100%
+        // data.percent is already calculated in sensors.py (0-100% within 4-20mA range)
+        const percent = Math.min(Math.max(data.percent ?? 0, 0), 100);
         updateGauge(data.id, percent);
     } else {
-        // Line chart sensors — push new data point and update chart
+        // Line chart — update with latest history
         if (charts[data.id]) {
             charts[data.id].data.labels = history.map(h =>
                 h.time.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"})
             );
             charts[data.id].data.datasets[0].data = history.map(h => h.value);
-            charts[data.id].update("none"); // "none" skips animation for performance
+            charts[data.id].update("none");
         }
     }
 
-    // Live rolling average from the last 60 in-memory readings
+    // Live rolling average from last 60 in-memory readings
     const midEl = document.getElementById(`mid-${data.id}`);
     if (midEl && history.length > 0) {
         const avg = history.reduce((s, h) => s + h.value, 0) / history.length;
@@ -187,15 +316,11 @@ function updateCard(data) {
 }
 
 // ── GAUGE UPDATE ─────────────────────────────────────────
-// Updates the SVG gauge arc and center label for a given sensor
 function updateGauge(id, percent) {
     const arc = document.getElementById(`gauge-arc-${id}`);
     const label = document.getElementById(`gauge-label-${id}`);
     if (!arc) return;
 
-    // stroke-dasharray = full circumference (2π × radius = 2π × 54 ≈ 339.3)
-    // stroke-dashoffset controls how much of the arc is visible:
-    // offset = 0 → full circle (100%), offset = 339.3 → empty (0%)
     const circumference = 2 * Math.PI * 54;
     const offset = circumference * (1 - percent / 100);
     arc.style.strokeDashoffset = offset;
@@ -203,32 +328,25 @@ function updateGauge(id, percent) {
 }
 
 // ── CARD CREATION ────────────────────────────────────────
-// Creates a new sensor card DOM element when a new sensor is first seen.
-// Cards are never recreated — only updated via updateCard() after this.
 function createCard(data) {
     const grid = document.getElementById("sensor-grid");
     const visual = VISUAL_MAP[data.category] || VISUAL_MAP.default;
     const isVoltage = data.type === "voltage";
-    const color   = isVoltage ? "#3b82f6" : "#10b981"; // blue for voltage, green for current
+    const color   = isVoltage ? "#3b82f6" : "#10b981";
     const colorBg = isVoltage ? "rgba(59,130,246,0.08)" : "rgba(16,185,129,0.08)";
 
     const card = document.createElement("div");
     card.className = `sensor-card ${data.type}`;
     card.id = `card-${data.id}`;
 
-    // Gauge HTML for distance sensors — SVG circle with animated arc
-    // Line chart HTML for all other sensor types — Chart.js canvas
     const bodyHtml = visual === "gauge"
         ? `
         <div class="gauge-wrap">
             <svg viewBox="0 0 120 120" class="gauge-svg">
-                <!-- Background track — always full grey circle -->
                 <circle cx="60" cy="60" r="54" class="gauge-track"></circle>
-                <!-- Foreground arc — animates based on distance percentage -->
                 <circle cx="60" cy="60" r="54" class="gauge-arc" id="gauge-arc-${data.id}"
                     style="stroke:${color}"></circle>
             </svg>
-            <!-- Percentage label centered inside the gauge -->
             <div class="gauge-center">
                 <span class="gauge-percent" id="gauge-label-${data.id}">0%</span>
             </div>
@@ -243,42 +361,47 @@ function createCard(data) {
     card.innerHTML = `
         <div class="sensor-header">
             <div class="sensor-title">
-                <!-- Sensor name e.g. "DISTANZSENSOR" -->
                 <span class="sensor-name">${data.name}</span>
-                <!-- Signal type badge e.g. "0–10V" or "4–20mA" -->
                 <span class="sensor-type-badge">${isVoltage ? "0–10V" : "4–20mA"}</span>
             </div>
             <div class="sensor-right">
-                <!-- Main live value + unit e.g. "485 mm" or "0.42 bar" -->
                 <div class="sensor-value-row">
                     <span class="sensor-value" id="value-${data.id}">--</span>
                     <span class="sensor-unit">${data.unit}</span>
                 </div>
-                <!-- Secondary voltage — only populated for distance sensors -->
                 <div class="sensor-voltage" id="voltage-${data.id}"></div>
-                <!-- Secondary current — only populated for pressure sensors -->
                 <div class="sensor-voltage" id="current-${data.id}"></div>
-                <!-- Live rolling average from last 60 in-memory readings -->
                 <div class="sensor-mid" id="mid-${data.id}">Live Mittel: --</div>
             </div>
         </div>
         ${bodyHtml}
-        <!-- Historical averages row — fetched from Flask API every 30 seconds -->
+        <!-- Historical averages — each is a clickable button -->
         <div class="sensor-averages" id="avg-${data.id}">
-            <span class="avg-item"><span class="avg-label">1min</span> --</span>
-            <span class="avg-item"><span class="avg-label">10min</span> --</span>
-            <span class="avg-item"><span class="avg-label">1h</span> --</span>
-            <span class="avg-item"><span class="avg-label">24h</span> --</span>
-            <span class="avg-item"><span class="avg-label">7d</span> --</span>
+            <span class="avg-item" onclick="toggleHistory(${data.id}, '1min')">
+                <span class="avg-label">1min</span><span>--</span>
+            </span>
+            <span class="avg-item" onclick="toggleHistory(${data.id}, '10min')">
+                <span class="avg-label">10min</span><span>--</span>
+            </span>
+            <span class="avg-item" onclick="toggleHistory(${data.id}, '1h')">
+                <span class="avg-label">1h</span><span>--</span>
+            </span>
+            <span class="avg-item" onclick="toggleHistory(${data.id}, '24h')">
+                <span class="avg-label">24h</span><span>--</span>
+            </span>
+            <span class="avg-item" onclick="toggleHistory(${data.id}, '7d')">
+                <span class="avg-label">7d</span><span>--</span>
+            </span>
         </div>
-        <!-- Timestamp of last received reading -->
+        <!-- History chart container — hidden by default, shown when time range clicked -->
+        <div class="history-container" id="history-${data.id}" style="display:none;">
+            <canvas id="history-canvas-${data.id}"></canvas>
+        </div>
         <div class="timestamp" id="time-${data.id}">--</div>
     `;
 
     grid.appendChild(card);
 
-    // Only create Chart.js instance for line chart sensors
-    // Gauge sensors use SVG directly — no Chart.js needed
     if (visual !== "gauge") {
         const ctx = document.getElementById(`chart-${data.id}`).getContext("2d");
         charts[data.id] = new Chart(ctx, {
@@ -289,14 +412,14 @@ function createCard(data) {
                     data: [],
                     borderColor: color,
                     borderWidth: 2,
-                    pointRadius: 0,      // no dots — cleaner look for real-time data
-                    tension: 0.3,        // slight curve for smoother appearance
-                    fill: true,          // fill area under the line
+                    pointRadius: 0,
+                    tension: 0.3,
+                    fill: true,
                     backgroundColor: colorBg,
                 }]
             },
             options: {
-                animation: false,  // disable animation for real-time performance
+                animation: false,
                 plugins: { legend: { display: false } },
                 scales: {
                     x: {
@@ -312,7 +435,7 @@ function createCard(data) {
                 },
                 responsive: true,
                 maintainAspectRatio: false,
-                devicePixelRatio: 2,  // sharper rendering on high-DPI displays
+                devicePixelRatio: 2,
             }
         });
     }
