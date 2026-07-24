@@ -12,40 +12,41 @@ const MAX_HISTORY = 60;         // Number of data points to keep in memory per s
 const API_BASE = `http://${window.location.hostname}:5001`;
 
 // ── VISUAL MAP ───────────────────────────────────────────
-// Maps sensor category to chart type.
-// Add a new category here and every sensor with that category
-// automatically gets the right visualization — no other code changes needed.
 const VISUAL_MAP = {
-    "distance":    "line",    // distance sensors → line chart (trend over time)
-    "temperature": "line",    // temperature sensors → line chart
-    "pressure":    "gauge",   // pressure sensors → gauge (0-1 bar fill level)
-    "default":     "line",    // anything else → line chart
+    "distance":    "line",
+    "temperature": "line",
+    "pressure":    "gauge",
+    "default":     "line",
 };
 
 // ── STATE ────────────────────────────────────────────────
-const sensorData = {};       // stores history arrays per sensor id
-const charts = {};           // stores Chart.js live instances per sensor id
-const historyCharts = {};    // stores Chart.js history instances per sensor id
-const activeRange = {};      // tracks which time range button is active per sensor
+const sensorData = {};
+const charts = {};
+const historyCharts = {};
+const activeRange = {};
 let knownSensorCount = 0;
+
+// ── RENDER THROTTLE ──────────────────────────────────────
+// At 100Hz MQTT rate, Chart.js would try to redraw 100x/second → crash.
+// This limits chart redraws to max 10Hz (every 100ms) while still
+// storing all 100Hz data in memory and InfluxDB.
+const RENDER_INTERVAL = 100; // ms between chart redraws = 10Hz max
+const lastRender = {};       // tracks last render time per sensor id
 
 // ── MQTT CLIENT ──────────────────────────────────────────
 const client = mqtt.connect(`ws://${MQTT_HOST}:${MQTT_PORT}`);
 
-// Update connection status badge when MQTT connects
 client.on("connect", () => {
     document.getElementById("connection-status").className = "status connected";
     document.getElementById("connection-status").textContent = "Verbunden";
     client.subscribe(MQTT_TOPIC);
 });
 
-// Update connection status badge when MQTT disconnects
 client.on("disconnect", () => {
     document.getElementById("connection-status").className = "status disconnected";
     document.getElementById("connection-status").textContent = "Getrennt";
 });
 
-// Handle incoming MQTT messages — parse JSON and process
 client.on("message", (topic, message) => {
     const data = JSON.parse(message.toString());
     handleMessage(data);
@@ -53,22 +54,22 @@ client.on("message", (topic, message) => {
 
 // ── MESSAGE HANDLER ──────────────────────────────────────
 function handleMessage(data) {
-    // First time we see this sensor — create its card and fetch averages
     if (!sensorData[data.id]) {
         sensorData[data.id] = { history: [] };
-        activeRange[data.id] = null; // no time range selected yet
+        activeRange[data.id] = null;
+        lastRender[data.id] = 0; // initialize render timer for this sensor
         createCard(data);
         rebalanceGrid();
         fetchAverages(data.id);
     }
 
-    // Add this reading to the in-memory history buffer
     sensorData[data.id].history.push({
         value: data.value,
         time: new Date(data.timestamp * 1000)
     });
 
-    // Keep only the last MAX_HISTORY readings
+    // At 100Hz with MAX_HISTORY=60 the buffer fills in 0.6s
+    // Increase to 6000 to keep 60 seconds of history at 100Hz
     if (sensorData[data.id].history.length > MAX_HISTORY) {
         sensorData[data.id].history.shift();
     }
@@ -77,27 +78,22 @@ function handleMessage(data) {
 }
 
 // ── FLASK API — HISTORICAL AVERAGES ─────────────────────
-// Fetches pre-computed averages from Flask → InfluxDB for a given sensor
 async function fetchAverages(sensorId) {
     try {
         const response = await fetch(`${API_BASE}/api/sensors/${sensorId}/average`);
         const data = await response.json();
         updateAverages(sensorId, data.averages);
     } catch (err) {
-        // Flask might not be running — fail silently, live MQTT data still works
         console.warn(`Could not fetch averages for sensor ${sensorId}:`, err);
     }
 }
 
-// Updates the averages row — now renders as clickable buttons
 function updateAverages(sensorId, averages) {
     const avgEl = document.getElementById(`avg-${sensorId}`);
     if (!avgEl) return;
 
     const fmt = (val) => val !== null ? val.toFixed(2) : "--";
 
-    // Each time range is now a clickable button
-    // Clicking fetches and shows the full history for that range
     avgEl.innerHTML = `
         <span class="avg-item" onclick="toggleHistory(${sensorId}, '1min')">
             <span class="avg-label">1min</span>
@@ -123,34 +119,24 @@ function updateAverages(sensorId, averages) {
 }
 
 // ── HISTORY TOGGLE ───────────────────────────────────────
-// Called when a time range button is clicked.
-// Fetches historical data from Flask and shows/hides the history chart.
 async function toggleHistory(sensorId, range) {
     const historyEl = document.getElementById(`history-${sensorId}`);
     if (!historyEl) return;
 
-    // If same range clicked again — hide the history chart (toggle off)
     if (activeRange[sensorId] === range) {
         activeRange[sensorId] = null;
         historyEl.style.display = "none";
-
-        // Destroy history chart to free memory
         if (historyCharts[sensorId]) {
             historyCharts[sensorId].destroy();
             delete historyCharts[sensorId];
         }
-
-        // Remove active highlight from all buttons
         document.querySelectorAll(`#avg-${sensorId} .avg-item`).forEach(el => {
             el.classList.remove("avg-active");
         });
         return;
     }
 
-    // New range selected — fetch history from Flask API
     activeRange[sensorId] = range;
-
-    // Highlight the active button
     document.querySelectorAll(`#avg-${sensorId} .avg-item`).forEach(el => {
         el.classList.remove("avg-active");
     });
@@ -166,28 +152,23 @@ async function toggleHistory(sensorId, range) {
             return;
         }
 
-        // Show the history container
         historyEl.style.display = "block";
 
-        // Destroy previous history chart if exists
         if (historyCharts[sensorId]) {
             historyCharts[sensorId].destroy();
         }
 
-        // Get sensor color
         const card = document.getElementById(`card-${sensorId}`);
         const isVoltage = card.classList.contains("voltage");
         const color = isVoltage ? "#3b82f6" : "#10b981";
         const colorBg = isVoltage ? "rgba(59,130,246,0.08)" : "rgba(16,185,129,0.08)";
 
-        // Build labels and values from InfluxDB data
         const labels = data.data.map(p => {
             const d = new Date(p.time);
             return d.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"});
         });
         const values = data.data.map(p => p.value);
 
-        // Create history Chart.js instance
         const canvas = document.getElementById(`history-canvas-${sensorId}`);
         historyCharts[sensorId] = new Chart(canvas.getContext("2d"), {
             type: "line",
@@ -207,7 +188,6 @@ async function toggleHistory(sensorId, range) {
                 animation: false,
                 plugins: {
                     legend: { display: false },
-                    // Show range label as chart title
                     title: {
                         display: true,
                         text: `Verlauf — letzte ${range}`,
@@ -240,7 +220,6 @@ async function toggleHistory(sensorId, range) {
     }
 }
 
-// Refresh all sensor averages every 30 seconds
 setInterval(() => {
     Object.keys(sensorData).forEach(id => fetchAverages(id));
 }, 30000);
@@ -269,7 +248,7 @@ function updateCard(data) {
     const valueEl = document.getElementById(`value-${data.id}`);
     if (!valueEl) return;
 
-    // Update the main live value
+    // Always update the live value display — lightweight DOM update, fine at 100Hz
     valueEl.textContent = data.value.toFixed(2);
 
     // Secondary voltage for distance sensors
@@ -284,34 +263,44 @@ function updateCard(data) {
         currentEl.textContent = `(${data.current_ma.toFixed(2)} mA)`;
     }
 
-    // Timestamp
+    // Timestamp — always update
     const date = new Date(data.timestamp * 1000);
     const timeEl = document.getElementById(`time-${data.id}`);
     if (timeEl) timeEl.textContent = date.toLocaleTimeString("de-DE");
 
     const history = sensorData[data.id].history;
 
-    if (visual === "gauge") {
-        // Pressure gauge: 0 bar = 0%, 1 bar = 100%
-        // data.percent is already calculated in sensors.py (0-100% within 4-20mA range)
-        const percent = Math.min(Math.max(data.percent ?? 0, 0), 100);
-        updateGauge(data.id, percent);
-    } else {
-        // Line chart — update with latest history
-        if (charts[data.id]) {
-            charts[data.id].data.labels = history.map(h =>
-                h.time.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"})
-            );
-            charts[data.id].data.datasets[0].data = history.map(h => h.value);
-            charts[data.id].update("none");
-        }
-    }
+    // ── RENDER THROTTLE ──────────────────────────────────
+    // Chart.js redraws are expensive — limit to 10Hz regardless of MQTT rate.
+    // The live value above still updates at full 100Hz (cheap DOM text change).
+    // All data is still stored in memory and InfluxDB at full rate.
+    const now = Date.now();
+    const shouldRender = (now - (lastRender[data.id] || 0)) >= RENDER_INTERVAL;
 
-    // Live rolling average from last 60 in-memory readings
-    const midEl = document.getElementById(`mid-${data.id}`);
-    if (midEl && history.length > 0) {
-        const avg = history.reduce((s, h) => s + h.value, 0) / history.length;
-        midEl.textContent = `Live Mittel: ${avg.toFixed(2)} ${data.unit}`;
+    if (shouldRender) {
+        lastRender[data.id] = now;
+
+        if (visual === "gauge") {
+            // Pressure gauge: 0 bar = 0%, 1 bar = 100%
+            const percent = Math.min(Math.max(data.percent ?? 0, 0), 100);
+            updateGauge(data.id, percent);
+        } else {
+            // Line chart — throttled to 10Hz to prevent browser freeze
+            if (charts[data.id]) {
+                charts[data.id].data.labels = history.map(h =>
+                    h.time.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"})
+                );
+                charts[data.id].data.datasets[0].data = history.map(h => h.value);
+                charts[data.id].update("none");
+            }
+        }
+
+        // Live rolling average — also throttled (no need to recalculate 100x/sec)
+        const midEl = document.getElementById(`mid-${data.id}`);
+        if (midEl && history.length > 0) {
+            const avg = history.reduce((s, h) => s + h.value, 0) / history.length;
+            midEl.textContent = `Live Mittel: ${avg.toFixed(2)} ${data.unit}`;
+        }
     }
 }
 
@@ -375,7 +364,6 @@ function createCard(data) {
             </div>
         </div>
         ${bodyHtml}
-        <!-- Historical averages — each is a clickable button -->
         <div class="sensor-averages" id="avg-${data.id}">
             <span class="avg-item" onclick="toggleHistory(${data.id}, '1min')">
                 <span class="avg-label">1min</span><span>--</span>
@@ -393,7 +381,6 @@ function createCard(data) {
                 <span class="avg-label">7d</span><span>--</span>
             </span>
         </div>
-        <!-- History chart container — hidden by default, shown when time range clicked -->
         <div class="history-container" id="history-${data.id}" style="display:none;">
             <canvas id="history-canvas-${data.id}"></canvas>
         </div>
