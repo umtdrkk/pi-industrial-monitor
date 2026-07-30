@@ -30,13 +30,13 @@ def _convert_voltage(voltage_at_adc):
     """
     Converts ADC voltage to real-world distance in mm.
 
-    Hardware: Capacitive distance sensor (15-500mm range)
+    Hardware: Ultrasonic distance sensor (15-500mm range)
     Signal type: 0-10V analog output, NORMAL mode (0V...10V)
         0V   = object at minimum distance (15mm)
         10V  = no object detected (> 500mm away)
 
     Signal conditioning: 33kΩ + 10.5kΩ voltage divider
-        scales 0-10V sensor output down to ~0-2.5V for MCP3208 (max 3.3V)
+        scales 0-10V sensor output down to ~0-2.41V for MCP3208 (max 3.3V)
         reverse factor: (33 + 10.5) / 10.5 = 43.5 / 10.5 = 4.143
 
     Distance formula (linear, normal mode):
@@ -53,7 +53,7 @@ def _convert_voltage(voltage_at_adc):
     # 0V → 15mm (closest), 10V → 500mm (furthest / nothing detected)
     distance_mm = round((real_voltage / 10) * 485 + 15, 1)
 
-    # Step 3: clamp to valid sensor range (15-500mm)
+    # Step 3: clamp to valid sensor range (15-500mm) to avoid out-of-range values
     distance_mm = max(15.0, min(500.0, distance_mm))
 
     return {
@@ -62,13 +62,14 @@ def _convert_voltage(voltage_at_adc):
         "voltage": real_voltage, # raw sensor voltage — shown as secondary info on dashboard
     }
 
+
 def _convert_current(voltage_at_adc):
     """
     Converts ADC voltage to real-world pressure in bar.
 
     Hardware: Baumer PP20H pressure sensor (0-1 bar range)
     Signal type: 4-20mA industrial current loop
-        4mA  = 0.0 bar (no pressure)
+        4mA  = 0.0 bar (no pressure / atmospheric zero-point)
         20mA = 1.0 bar (maximum pressure)
         <4mA = sensor not powered or fault condition
 
@@ -115,8 +116,8 @@ CONVERTERS = {
 # Simulated ADC voltage ranges for each sensor type — used only when RUNNING_ON_PI = False.
 # These represent realistic voltages AT the ADC input (after signal conditioning).
 FAKE_ADC_RANGES = {
-    "voltage": (0.0, 3.1),   # simulates 0-10V sensor through 22k/10k divider → 0-3.1V at ADC
-    "current": (0.6, 3.0),   # simulates 4-20mA sensor through 150Ω shunt → 0.6-3.0V at ADC
+    "voltage": (0.0, 3.1),   # simulates 0-10V sensor through 33k/10.5k divider
+    "current": (0.6, 3.0),   # simulates 4-20mA sensor through 150Ω shunt
                               # 0.6V = 4mA (0 bar), 3.0V = 20mA (1 bar)
 }
 
@@ -151,9 +152,54 @@ def _read_fake_sensors():
             "type": ch_type,
             "category": channel.get("category", "default"),
             "timestamp": time.time(),
-            **result  # unpacks value, unit, voltage (distance) or percent (current)
+            **result
         })
     return readings
+
+
+# ── SPI SINGLETON ────────────────────────────────────────────────────────────
+# The SPI bus is opened ONCE when the first reading is requested and stays
+# open for the lifetime of the process.
+#
+# Previously: spi.open() + spi.close() called every read cycle
+#   → ~30ms overhead per cycle from Linux kernel SPI device open/close
+#   → hard cap of ~25Hz even at SENSOR_READ_INTERVAL = 0.01
+#
+# Now: SPI is opened once and reused for all subsequent reads
+#   → zero open/close overhead per cycle
+#   → bottleneck shifts to MQTT publish speed instead
+#
+# _spi holds the shared SpiDev instance, initialized lazily on first use.
+_spi = None
+
+
+def _get_spi():
+    """
+    Returns the shared SPI instance, initializing it on first call (lazy init).
+
+    Using a singleton avoids the overhead of opening and closing the SPI
+    device file (/dev/spidev0.0) on every read cycle. The SPI connection
+    is kept open permanently until the process exits.
+
+    Returns:
+        spidev.SpiDev: the open, configured SPI instance
+    """
+    global _spi
+    if _spi is None:
+        import spidev
+        _spi = spidev.SpiDev()
+
+        # Open chip 0 (CE0) — handles sensors 1-8
+        # Chip 1 (CE1) would handle sensors 9-16 if needed
+        _spi.open(0, 0)
+
+        # SPI clock speed: 1.35 MHz
+        # MCP3208 supports up to 2.0 MHz at 3.3V — we stay safely below
+        _spi.max_speed_hz = 1350000
+
+        print("[SPI] Opened SPI bus (singleton) — will stay open for process lifetime")
+
+    return _spi
 
 
 # ── REAL DATA (Raspberry Pi with MCP3208 ADC) ────────────────────────────────
@@ -164,16 +210,24 @@ def _read_real_sensors():
 
     MCP3208 specs:
         12-bit resolution: raw values 0 to 4095
-        Reference voltage: 3.3V
-        Voltage resolution: 3.3V / 4096 = ~0.8mV per step
-        8 channels per chip, chip 0 = sensors 1-8, chip 1 = sensors 9-16
+        Reference voltage: 3.3V (Vref = Vdd)
+        Voltage resolution: 3.3V / 4096 = ~0.806 mV per step
+        8 channels per chip, single-ended mode
 
-    SPI command format (MCP3208 datasheet):
-        3 bytes sent, 3 bytes received simultaneously
-        Result is in the lower 12 bits of the response
+    SPI command format (MCP3208 datasheet, Table 5-1):
+        3 bytes sent simultaneously with 3 bytes received
+        Byte 1: start bit + single/diff select + channel MSB
+        Byte 2: channel LSBs + padding zeros
+        Byte 3: padding (0x00)
+        Result: lower 12 bits of response bytes 1-2
+
+    Performance:
+        SPI is accessed via the singleton _get_spi() — no open/close overhead.
+        Combined with async InfluxDB writes (main.py), this minimizes
+        per-cycle latency and maximizes achievable sample rate.
     """
-    import spidev
-    spi = spidev.SpiDev()
+    # Get the shared SPI instance — no open/close, returns immediately
+    spi = _get_spi()
     readings = []
 
     for channel in SENSOR_CHANNELS:
@@ -184,34 +238,32 @@ def _read_real_sensors():
             print(f"Warning: unknown sensor type '{ch_type}' for channel {channel['id']}, skipping")
             continue
 
-        # Sensors 1-8 → chip 0 (CE0), sensors 9-16 → chip 1 (CE1)
-        chip = 0 if channel["id"] <= 8 else 1
-        # 0-indexed channel number on the chip
+        # Convert 1-indexed sensor ID to 0-indexed MCP3208 channel number
+        # Sensor 1 → ch_num 0, Sensor 2 → ch_num 1, etc.
         ch_num = (channel["id"] - 1) % 8
 
-        # Open SPI connection to the selected chip
-        spi.open(0, chip)
-        spi.max_speed_hz = 1350000  # 1.35 MHz — within MCP3208 2.0 MHz max at 3.3V
-
-        # Build the 3-byte SPI command for single-ended reading (MCP3208 datasheet Table 5-1)
+        # Build the 3-byte SPI command for single-ended reading on ch_num
+        # Format from MCP3208 datasheet Table 5-1:
+        #   Byte 1: 0x06 | (ch_num MSB) — start bit + single-ended + channel bit 2
+        #   Byte 2: (ch_num LSBs) << 6  — channel bits 1-0 in upper bits
+        #   Byte 3: 0x00                — dummy byte, clocks out the result
         cmd = [0x06 | ((ch_num & 0x04) >> 2), (ch_num & 0x03) << 6, 0x00]
 
-        # Send command and simultaneously receive 3 bytes back
+        # Send command and simultaneously receive 3 bytes
+        # xfer2() keeps CS (chip select) low for the entire 3-byte transfer
         response = spi.xfer2(cmd)
 
-        # Extract 12-bit result: upper 4 bits from response[1], lower 8 from response[2]
+        # Extract the 12-bit result from the response:
+        #   response[1] contains the upper 4 bits (bits 11-8) in its lower nibble
+        #   response[2] contains the lower 8 bits (bits 7-0)
         raw = ((response[1] & 0x0F) << 8) | response[2]
 
-        # Release SPI connection before next channel
-        spi.close()
-
-        # Convert raw 12-bit value to voltage: voltage = raw × (3.3 / 4096)
+        # Convert raw 12-bit ADC value to voltage at the ADC input pin
+        # Formula: voltage = raw × (Vref / 2^12) = raw × (3.3 / 4096)
         voltage_at_adc = raw * (3.3 / 4096)
 
-        # DEBUG — remove this line after sensor validation is complete
-        print(f"[DEBUG] Channel {channel['id']} | raw={raw} | voltage_at_adc={voltage_at_adc:.3f}V")
-
         # Run through the appropriate converter for this sensor type
+        # Returns a dict with value, unit, and type-specific extra fields
         result = converter(voltage_at_adc)
 
         readings.append({
@@ -220,7 +272,7 @@ def _read_real_sensors():
             "type": ch_type,
             "category": channel.get("category", "default"),
             "timestamp": time.time(),
-            **result  # unpacks value, unit, voltage (distance) or percent (current)
+            **result  # unpacks value, unit, voltage (distance) or percent/current_ma (pressure)
         })
 
     return readings
