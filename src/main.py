@@ -19,10 +19,10 @@ from src.mqtt_client import connect, publish, disconnect
 from src.opcua_server import start_opcua_server
 
 # Import InfluxDB functions:
-# init_db       - creates the database if it doesn't exist yet
-# write_reading - writes a single sensor reading to InfluxDB
-# client        - the raw InfluxDB client for batch writes
-from src.influx_client import init_db, write_reading, client as influx_client
+# init_db           - creates the database if it doesn't exist yet
+# write_reading_udp - writes via UDP (fast, fire-and-forget)
+# client            - raw InfluxDB client for batch fallback
+from src.influx_client import init_db, write_reading_udp, client as influx_client
 
 # Import the configured delay (in seconds) between sensor reads
 from config.settings import SENSOR_READ_INTERVAL
@@ -36,26 +36,26 @@ from config.settings import SENSOR_READ_INTERVAL
 # Without this: read → publish → write (sequential, slow)
 # With this:    read → publish → queue.put() (fast)
 #                                     ↓
-#                              writer thread → batch write (background)
+#                              writer thread → UDP write (fire and forget)
 influx_queue = queue.Queue()
 
 
 def influx_writer_thread():
     """
-    Background thread that drains the influx_queue and writes to InfluxDB in batches.
+    Background thread that drains the influx_queue and writes to InfluxDB via UDP.
 
-    Batch writing is significantly faster than individual writes:
-        Individual: 1 HTTP request per point → ~37ms per write → ~27Hz max
-        Batch:      1 HTTP request per N points → much lower overhead → higher throughput
+    UDP writing is much faster than HTTP:
+        HTTP batch: ~20ms per request → ~47Hz max
+        UDP:        ~0.1ms per write  → theoretically 100Hz+
 
     Strategy:
         1. Wait for at least one reading (blocks up to 1 second)
         2. Drain everything else currently in the queue (non-blocking)
-        3. Write the entire batch in one HTTP request
+        3. Write each reading via UDP — fire and forget, no waiting
         4. Repeat
 
-    This keeps latency low while maximizing write throughput.
-    If InfluxDB is unavailable, errors are caught and logged without crashing.
+    Occasional lost UDP packets are acceptable at high sample rates —
+    the next reading arrives within milliseconds anyway.
     """
     while True:
         batch = []
@@ -66,47 +66,21 @@ def influx_writer_thread():
             influx_queue.task_done()
 
             # Drain everything else currently in the queue (non-blocking)
-            # This collects all readings that accumulated since the last write cycle
             while not influx_queue.empty():
                 item = influx_queue.get_nowait()
                 batch.append(item)
                 influx_queue.task_done()
 
         except queue.Empty:
-            # Nothing in queue — just wait for the next cycle
             continue
 
-        # Write the entire batch in one HTTP request to InfluxDB
-        # One request for N points is much faster than N individual requests
+        # Write each reading via UDP — extremely fast, no HTTP overhead
         if batch:
-            try:
-                # Convert readings to InfluxDB point format
-                points = [
-                    {
-                        "measurement": "sensor",
-                        "tags": {
-                            "sensor_id":   str(r["id"]),
-                            "sensor_name": r["name"],
-                            "sensor_type": r["type"],
-                            "category":    r.get("category", "default"),
-                        },
-                        "fields": {
-                            "value": float(r["value"]),
-                            "unit":  r["unit"],
-                        }
-                    }
-                    for r in batch
-                ]
+            for reading in batch:
+                write_reading_udp(reading)
 
-                # Single HTTP request for the whole batch
-                influx_client.write_points(points)
-
-                if len(batch) > 10:
-                    # Log batch size when it's large — useful for tuning
-                    print(f"[InfluxDB] Batch write: {len(batch)} points")
-
-            except Exception as e:
-                print(f"[InfluxDB] Batch write error ({len(batch)} points): {e}")
+            if len(batch) > 20:
+                print(f"[InfluxDB UDP] Wrote batch of {len(batch)} points")
 
 
 def mqtt_loop():
@@ -114,7 +88,7 @@ def mqtt_loop():
     Main sensor loop — runs in its own thread.
 
     Reads sensors at SENSOR_READ_INTERVAL, publishes to MQTT broker,
-    and puts readings into the influx_queue for async batch writing.
+    and puts readings into the influx_queue for async UDP writing.
     The actual InfluxDB write happens in a separate background thread,
     so this loop is never blocked by slow database writes.
     """
@@ -128,7 +102,7 @@ def mqtt_loop():
             publish(readings)
 
             # Put readings into the queue — returns instantly, never blocks
-            # The influx_writer_thread picks them up and batch writes to InfluxDB
+            # The influx_writer_thread picks them up and writes via UDP
             for reading in readings:
                 influx_queue.put(reading)
 
@@ -142,9 +116,8 @@ def main():
     # Initialize InfluxDB — creates the database "sensor_data" if it doesn't exist yet
     init_db()
 
-    # Start async batch InfluxDB writer thread
-    # Drains influx_queue in the background without blocking the sensor loop
-    # Uses batch writes for maximum throughput
+    # Start async UDP InfluxDB writer thread
+    # Drains influx_queue via UDP — fastest possible write method
     writer_thread = threading.Thread(target=influx_writer_thread, daemon=True)
     writer_thread.start()
 
