@@ -21,7 +21,8 @@ from src.opcua_server import start_opcua_server
 # Import InfluxDB functions:
 # init_db       - creates the database if it doesn't exist yet
 # write_reading - writes a single sensor reading to InfluxDB
-from src.influx_client import init_db, write_reading
+# client        - the raw InfluxDB client for batch writes
+from src.influx_client import init_db, write_reading, client as influx_client
 
 # Import the configured delay (in seconds) between sensor reads
 from config.settings import SENSOR_READ_INTERVAL
@@ -35,30 +36,77 @@ from config.settings import SENSOR_READ_INTERVAL
 # Without this: read → publish → write (sequential, slow)
 # With this:    read → publish → queue.put() (fast)
 #                                     ↓
-#                              writer thread → write (background, doesn't block)
+#                              writer thread → batch write (background)
 influx_queue = queue.Queue()
 
 
 def influx_writer_thread():
     """
-    Background thread that drains the influx_queue and writes to InfluxDB.
+    Background thread that drains the influx_queue and writes to InfluxDB in batches.
 
-    Runs forever as a daemon thread. If InfluxDB is slow or temporarily
-    unavailable, readings accumulate in the queue instead of blocking
-    the sensor reading loop. Errors are caught and logged without crashing.
+    Batch writing is significantly faster than individual writes:
+        Individual: 1 HTTP request per point → ~37ms per write → ~27Hz max
+        Batch:      1 HTTP request per N points → much lower overhead → higher throughput
+
+    Strategy:
+        1. Wait for at least one reading (blocks up to 1 second)
+        2. Drain everything else currently in the queue (non-blocking)
+        3. Write the entire batch in one HTTP request
+        4. Repeat
+
+    This keeps latency low while maximizing write throughput.
+    If InfluxDB is unavailable, errors are caught and logged without crashing.
     """
     while True:
+        batch = []
         try:
-            # Block until a reading is available (timeout allows clean shutdown)
-            reading = influx_queue.get(timeout=1.0)
-            write_reading(reading)
+            # Wait for the first item — blocks until something arrives
+            first = influx_queue.get(timeout=1.0)
+            batch.append(first)
             influx_queue.task_done()
+
+            # Drain everything else currently in the queue (non-blocking)
+            # This collects all readings that accumulated since the last write cycle
+            while not influx_queue.empty():
+                item = influx_queue.get_nowait()
+                batch.append(item)
+                influx_queue.task_done()
+
         except queue.Empty:
-            # No readings in queue — just wait for the next one
+            # Nothing in queue — just wait for the next cycle
             continue
-        except Exception as e:
-            # InfluxDB write failed — log it but keep running
-            print(f"[InfluxDB] Write error: {e}")
+
+        # Write the entire batch in one HTTP request to InfluxDB
+        # One request for N points is much faster than N individual requests
+        if batch:
+            try:
+                # Convert readings to InfluxDB point format
+                points = [
+                    {
+                        "measurement": "sensor",
+                        "tags": {
+                            "sensor_id":   str(r["id"]),
+                            "sensor_name": r["name"],
+                            "sensor_type": r["type"],
+                            "category":    r.get("category", "default"),
+                        },
+                        "fields": {
+                            "value": float(r["value"]),
+                            "unit":  r["unit"],
+                        }
+                    }
+                    for r in batch
+                ]
+
+                # Single HTTP request for the whole batch
+                influx_client.write_points(points)
+
+                if len(batch) > 10:
+                    # Log batch size when it's large — useful for tuning
+                    print(f"[InfluxDB] Batch write: {len(batch)} points")
+
+            except Exception as e:
+                print(f"[InfluxDB] Batch write error ({len(batch)} points): {e}")
 
 
 def mqtt_loop():
@@ -66,7 +114,7 @@ def mqtt_loop():
     Main sensor loop — runs in its own thread.
 
     Reads sensors at SENSOR_READ_INTERVAL, publishes to MQTT broker,
-    and puts readings into the influx_queue for async writing.
+    and puts readings into the influx_queue for async batch writing.
     The actual InfluxDB write happens in a separate background thread,
     so this loop is never blocked by slow database writes.
     """
@@ -80,7 +128,7 @@ def mqtt_loop():
             publish(readings)
 
             # Put readings into the queue — returns instantly, never blocks
-            # The influx_writer_thread picks them up and writes to InfluxDB
+            # The influx_writer_thread picks them up and batch writes to InfluxDB
             for reading in readings:
                 influx_queue.put(reading)
 
@@ -94,8 +142,9 @@ def main():
     # Initialize InfluxDB — creates the database "sensor_data" if it doesn't exist yet
     init_db()
 
-    # Start async InfluxDB writer thread
+    # Start async batch InfluxDB writer thread
     # Drains influx_queue in the background without blocking the sensor loop
+    # Uses batch writes for maximum throughput
     writer_thread = threading.Thread(target=influx_writer_thread, daemon=True)
     writer_thread.start()
 
