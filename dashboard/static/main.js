@@ -1,14 +1,9 @@
 // ── MQTT CONNECTION SETTINGS ─────────────────────────────
-// window.location.hostname automatically resolves to the correct host:
-// → "localhost" when running on Mac
-// → Pi's IP address when loaded from the Pi's dashboard
 const MQTT_HOST = window.location.hostname;
-const MQTT_PORT = 9001;         // WebSocket port configured in Mosquitto
-const MQTT_TOPIC = "factory/#"; // Subscribe to all sensor topics
-const MAX_HISTORY = 60;         // Number of data points to keep in memory per sensor
+const MQTT_PORT = 9001;
+const MQTT_TOPIC = "factory/#";
+const MAX_HISTORY = 60;
 
-// Flask API base URL — same host as dashboard, port 5001
-// Used to fetch historical averages and history from InfluxDB
 const API_BASE = `http://${window.location.hostname}:5001`;
 
 // ── VISUAL MAP ───────────────────────────────────────────
@@ -27,11 +22,10 @@ const activeRange = {};
 let knownSensorCount = 0;
 
 // ── RENDER THROTTLE ──────────────────────────────────────
-// At 100Hz MQTT rate, Chart.js would try to redraw 100x/second → crash.
-// This limits chart redraws to max 10Hz (every 100ms) while still
-// storing all 100Hz data in memory and InfluxDB.
-const RENDER_INTERVAL = 100; // ms between chart redraws = 10Hz max
-const lastRender = {};       // tracks last render time per sensor id
+// All DOM updates and chart redraws are throttled to 2Hz (every 500ms).
+// Data is still stored in memory and InfluxDB at the full sensor rate.
+const RENDER_INTERVAL = 500; // ms — 2Hz display update rate
+const lastRender = {};
 
 // ── MQTT CLIENT ──────────────────────────────────────────
 const client = mqtt.connect(`ws://${MQTT_HOST}:${MQTT_PORT}`);
@@ -57,7 +51,7 @@ function handleMessage(data) {
     if (!sensorData[data.id]) {
         sensorData[data.id] = { history: [] };
         activeRange[data.id] = null;
-        lastRender[data.id] = 0; // initialize render timer for this sensor
+        lastRender[data.id] = 0;
         createCard(data);
         rebalanceGrid();
         fetchAverages(data.id);
@@ -68,8 +62,6 @@ function handleMessage(data) {
         time: new Date(data.timestamp * 1000)
     });
 
-    // At 100Hz with MAX_HISTORY=60 the buffer fills in 0.6s
-    // Increase to 6000 to keep 60 seconds of history at 100Hz
     if (sensorData[data.id].history.length > MAX_HISTORY) {
         sensorData[data.id].history.shift();
     }
@@ -248,44 +240,43 @@ function updateCard(data) {
     const valueEl = document.getElementById(`value-${data.id}`);
     if (!valueEl) return;
 
-    // Always update the live value display — lightweight DOM update, fine at 100Hz
-    valueEl.textContent = data.value.toFixed(2);
-
-    // Secondary voltage for distance sensors
-    const voltageEl = document.getElementById(`voltage-${data.id}`);
-    if (voltageEl && data.voltage !== undefined) {
-        voltageEl.textContent = `(${data.voltage.toFixed(2)} V)`;
-    }
-
-    // Secondary current for pressure sensors
-    const currentEl = document.getElementById(`current-${data.id}`);
-    if (currentEl && data.current_ma !== undefined) {
-        currentEl.textContent = `(${data.current_ma.toFixed(2)} mA)`;
-    }
-
-    // Timestamp — always update
-    const date = new Date(data.timestamp * 1000);
-    const timeEl = document.getElementById(`time-${data.id}`);
-    if (timeEl) timeEl.textContent = date.toLocaleTimeString("de-DE");
-
     const history = sensorData[data.id].history;
 
     // ── RENDER THROTTLE ──────────────────────────────────
-    // Chart.js redraws are expensive — limit to 10Hz regardless of MQTT rate.
-    // The live value above still updates at full 100Hz (cheap DOM text change).
-    // All data is still stored in memory and InfluxDB at full rate.
+    // All updates — live value, chart, gauge, timestamp, average —
+    // are throttled to RENDER_INTERVAL ms (2Hz = every 500ms).
+    // Data continues to be stored in memory and InfluxDB at full rate.
     const now = Date.now();
     const shouldRender = (now - (lastRender[data.id] || 0)) >= RENDER_INTERVAL;
 
     if (shouldRender) {
         lastRender[data.id] = now;
 
+        // Live value (big number)
+        valueEl.textContent = data.value.toFixed(2);
+
+        // Secondary voltage — distance sensors
+        const voltageEl = document.getElementById(`voltage-${data.id}`);
+        if (voltageEl && data.voltage !== undefined) {
+            voltageEl.textContent = `(${data.voltage.toFixed(2)} V)`;
+        }
+
+        // Secondary current — pressure sensors
+        const currentEl = document.getElementById(`current-${data.id}`);
+        if (currentEl && data.current_ma !== undefined) {
+            currentEl.textContent = `(${data.current_ma.toFixed(2)} mA)`;
+        }
+
+        // Timestamp
+        const date = new Date(data.timestamp * 1000);
+        const timeEl = document.getElementById(`time-${data.id}`);
+        if (timeEl) timeEl.textContent = date.toLocaleTimeString("de-DE");
+
+        // Chart or gauge
         if (visual === "gauge") {
-            // Pressure gauge: 0 bar = 0%, 1 bar = 100%
             const percent = Math.min(Math.max(data.percent ?? 0, 0), 100);
             updateGauge(data.id, percent);
         } else {
-            // Line chart — throttled to 10Hz to prevent browser freeze
             if (charts[data.id]) {
                 charts[data.id].data.labels = history.map(h =>
                     h.time.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", second: "2-digit"})
@@ -295,7 +286,7 @@ function updateCard(data) {
             }
         }
 
-        // Live rolling average — also throttled (no need to recalculate 100x/sec)
+        // Live rolling average
         const midEl = document.getElementById(`mid-${data.id}`);
         if (midEl && history.length > 0) {
             const avg = history.reduce((s, h) => s + h.value, 0) / history.length;

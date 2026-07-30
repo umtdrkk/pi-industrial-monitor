@@ -4,6 +4,9 @@ import asyncio
 # threading - lets us run multiple things "at the same time" in one program
 import threading
 
+# queue - thread-safe queue for passing readings to the InfluxDB writer thread
+import queue
+
 # time - used for the sleep/delay between sensor reads
 import time
 
@@ -24,49 +27,87 @@ from src.influx_client import init_db, write_reading
 from config.settings import SENSOR_READ_INTERVAL
 
 
+# ── ASYNC INFLUXDB WRITER ────────────────────────────────────────────────────
+# A thread-safe queue that receives sensor readings from the MQTT loop.
+# The InfluxDB writer thread drains this queue independently,
+# so slow InfluxDB writes never block the sensor reading loop.
+#
+# Without this: read → publish → write (sequential, slow)
+# With this:    read → publish → queue.put() (fast)
+#                                     ↓
+#                              writer thread → write (background, doesn't block)
+influx_queue = queue.Queue()
+
+
+def influx_writer_thread():
+    """
+    Background thread that drains the influx_queue and writes to InfluxDB.
+
+    Runs forever as a daemon thread. If InfluxDB is slow or temporarily
+    unavailable, readings accumulate in the queue instead of blocking
+    the sensor reading loop. Errors are caught and logged without crashing.
+    """
+    while True:
+        try:
+            # Block until a reading is available (timeout allows clean shutdown)
+            reading = influx_queue.get(timeout=1.0)
+            write_reading(reading)
+            influx_queue.task_done()
+        except queue.Empty:
+            # No readings in queue — just wait for the next one
+            continue
+        except Exception as e:
+            # InfluxDB write failed — log it but keep running
+            print(f"[InfluxDB] Write error: {e}")
+
+
 def mqtt_loop():
-    # This function runs in its own thread, handling the MQTT side of things
+    """
+    Main sensor loop — runs in its own thread.
+
+    Reads sensors at SENSOR_READ_INTERVAL, publishes to MQTT broker,
+    and puts readings into the influx_queue for async writing.
+    The actual InfluxDB write happens in a separate background thread,
+    so this loop is never blocked by slow database writes.
+    """
     connect()
 
     try:
-        # Loop forever: read sensors, publish to MQTT, write to InfluxDB, wait, repeat
         while True:
             readings = read_sensors()
 
             # Publish all readings to MQTT broker so the dashboard receives them live
-            # publish() handles looping through each sensor internally
             publish(readings)
 
-            # Write each reading individually to InfluxDB for persistent historical storage
-            # This is what allows us to query averages over 1h, 24h, 7d later
+            # Put readings into the queue — returns instantly, never blocks
+            # The influx_writer_thread picks them up and writes to InfluxDB
             for reading in readings:
-                write_reading(reading)
+                influx_queue.put(reading)
 
             time.sleep(SENSOR_READ_INTERVAL)
 
     except KeyboardInterrupt:
-        # If the program is stopped (Ctrl+C), disconnect cleanly
         disconnect()
 
 
 def main():
     # Initialize InfluxDB — creates the database "sensor_data" if it doesn't exist yet
-    # This runs once at startup before anything else starts
     init_db()
 
+    # Start async InfluxDB writer thread
+    # Drains influx_queue in the background without blocking the sensor loop
+    writer_thread = threading.Thread(target=influx_writer_thread, daemon=True)
+    writer_thread.start()
+
     # Start Flask API server in background thread
-    # Serves historical data endpoints on port 5000
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
 
-    # Start MQTT loop in background thread so it doesn't block the OPC UA server
-    # "daemon=True" means this thread automatically stops when the main program exits
+    # Start MQTT loop in background thread
     mqtt_thread = threading.Thread(target=mqtt_loop, daemon=True)
     mqtt_thread.start()
 
     # Run the OPC UA server on the main thread
-    # We pass read_sensors so it can grab the latest readings whenever needed
-    # asyncio.run() starts and manages the async event loop
     asyncio.run(start_opcua_server(read_sensors))
 
 
